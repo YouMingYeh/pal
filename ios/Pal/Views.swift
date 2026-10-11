@@ -46,6 +46,21 @@ private struct PalSendButton: View {
     }
 }
 
+struct PalTypingLane: View {
+    var visible: Bool
+    var animated: Bool
+    @ScaledMetric(relativeTo: .caption) private var height: CGFloat = 28
+    var body: some View {
+        HStack(spacing: 6) {
+            if visible {
+                PalMascotAvatar(emotion: "attentif", animated: animated, size: 24)
+                Text("Pal is typing…").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }.frame(height: height).accessibilityElement(children: .combine).accessibilityHidden(!visible)
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var store: PalStore
     @Environment(\.scenePhase) private var phase
@@ -217,6 +232,7 @@ struct ChatView: View {
     @State private var routeCard: MessageCard?
     @State private var pollingError: String?
     @State private var lastRead: UUID?
+    @State private var typingExpired = false
     private var state: GroupState { store.states[group.id] ?? .empty }
     private var pending: [OutgoingMessage] { store.outgoing.filter { item in item.groupID == group.id && item.userID == store.userID && !messages.contains(where: { $0.clientID == item.clientID }) } }
     var body: some View {
@@ -251,6 +267,12 @@ struct ChatView: View {
             .navigationDestination(isPresented: $map) { GroupMapView(group: group) }
             .sheet(item: $routeCard) { card in NavigationStack { PalCardView(group: group, card: card).padding().navigationTitle("Details").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { routeCard = nil } } } } }
             .onChange(of: store.requestedEntity) { _, card in if let card { if !["choice", "availability"].contains(card.type) { routeCard = card }; store.requestedEntity = nil } }
+            .task(id: store.typingDeadline(in: group.id)) {
+                typingExpired = false
+                guard let expiry = store.typingDeadline(in: group.id) else { return }
+                guard expiry > Date() else { typingExpired = true; return }
+                do { try await Task.sleep(for: .seconds(expiry.timeIntervalSinceNow)); typingExpired = true } catch { }
+            }
             .task(id: phase) {
                 guard phase == .active else { return }
                 if let card = store.requestedEntity { if !["choice", "availability"].contains(card.type) { routeCard = card }; store.requestedEntity = nil }
@@ -288,6 +310,9 @@ struct ChatView: View {
     }
     private var composer: some View {
         VStack(spacing: 8) {
+            PalTypingLane(visible: !typingExpired && store.isPalTyping(in: group.id), animated: phase == .active)
+                .padding(.horizontal, 18)
+
             if let pollingError { Text(pollingError).font(.caption).foregroundStyle(.red) }
             if let reply { HStack { Text("Reply to \(memberName(reply)): \(reply.body)").font(.caption).lineLimit(1); Spacer(); Button { self.reply = nil } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Cancel reply").frame(minWidth: 44, minHeight: 44) }.padding(.horizontal, 15) }
             if let attachment { DraftMediaPreview(draft: attachment, onRemove: removeAttachment).padding(.horizontal, 15) }
@@ -332,7 +357,7 @@ struct ChatView: View {
         } else { HStack(alignment: .bottom, spacing: 7) {
             if mine { Spacer(minLength: 44) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
-                if !mine && (showSender || message.role == "pal") { HStack(spacing: 6) { if message.role == "pal" { PalMascotAvatar(emotion: message.emotion, animated: phase == .active, size: 40).accessibilityHidden(true) }; Text(memberName(message)).font(.caption).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5) }
+                if !mine && (showSender || message.role == "pal") { HStack(spacing: 6) { if message.role == "pal" { PalMascotAvatar(emotion: message.emotion, animated: phase == .active, size: 28).accessibilityHidden(true) } else { AvatarView(name: memberName(message), url: state.members.first { $0.userID == message.senderID }?.avatarURL, size: 24).accessibilityHidden(true) }; Text(memberName(message)).font(.caption).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5) }
                 if let replyID = message.replyToID, let original = messages.first(where: { $0.id == replyID }) { Text("\(memberName(original)): \(original.body)").font(.caption).lineLimit(2).foregroundStyle(.secondary).padding(8).background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10)) }
                 if let body = message.plainBody(in: state) {
                     Text(PalText.linked(body, markdown: message.role == "pal")).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))

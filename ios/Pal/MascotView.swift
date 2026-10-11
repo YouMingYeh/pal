@@ -72,9 +72,11 @@ struct PalMascotAvatar: View {
     static func image(for emotion: String) -> UIImage? {
         let expression = PalMascotEmotion.normalized(emotion)
         if let image = cache[expression] { return image }
-        let frames = (0..<32).compactMap { UIImage(named: "PalMascotMotion-\(expression)-\($0)") }
-        guard frames.count == 32, let image = UIImage.animatedImage(with: frames, duration: 4) else { return nil }
-        // shortcut: a four-second sampled loop, use the live engine for continuous interactive motion.
+        let forward = (0..<64).compactMap { UIImage(named: "PalMascotMotion-\(expression)-\($0)") }
+        guard forward.count == 64 else { return nil }
+        // Reuse the same decoded frames on the return path; adjacent samples meet at both ends.
+        let frames = forward + forward.dropFirst().dropLast().reversed()
+        guard let image = UIImage.animatedImage(with: frames, duration: Double(frames.count) / 16) else { return nil }
         cache[expression] = image
         return image
     }
@@ -89,9 +91,19 @@ struct MascotFramePlayer: UIViewRepresentable {
     func makeUIView(context: Context) -> UIImageView {
         let view = UIImageView()
         view.contentMode = .scaleAspectFit
+        view.clipsToBounds = true
+        for axis in [NSLayoutConstraint.Axis.horizontal, .vertical] {
+            view.setContentHuggingPriority(.defaultLow, for: axis)
+            view.setContentCompressionResistancePriority(.defaultLow, for: axis)
+        }
         view.isUserInteractionEnabled = false
         view.isAccessibilityElement = false
         return view
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIImageView, context: Context) -> CGSize? {
+        guard let width = proposal.width, let height = proposal.height else { return nil }
+        // The source raster is larger than its display canvas; it must never set the avatar's layout.
+        return CGSize(width: width, height: height)
     }
     func updateUIView(_ view: UIImageView, context: Context) {
         if view.image !== image.images?.first {

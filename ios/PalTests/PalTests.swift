@@ -30,6 +30,17 @@ final class PalTests: XCTestCase {
         XCTAssertNotNil(Bundle.main.url(forResource: "Bloub-LICENSE", withExtension: "txt", subdirectory: "Mascot"))
     }
 
+    func testOptimisticTypingWaitsForAPostAcknowledgementAndFreshState() {
+        let now = Date(timeIntervalSince1970: 1000)
+        var hint = PalTypingHint(clientID: UUID(), now: now)
+        XCTAssertTrue(hint.isVisible(at: now))
+        XCTAssertFalse(hint.acceptsState(sequence: 10), "An earlier state read cannot erase an in-flight send.")
+        hint.posted(after: 10)
+        XCTAssertFalse(hint.acceptsState(sequence: 10))
+        XCTAssertTrue(hint.acceptsState(sequence: 11), "The first post-ack read replaces optimistic status with the actual queued/running/idle lease.")
+        XCTAssertFalse(hint.isVisible(at: now.addingTimeInterval(120)), "A failed state fetch cannot leave an optimistic indicator indefinitely.")
+    }
+
     func testPalThinkingRequiresAnUnexpiredRealChatJob() throws {
         let now = PalDate.date("2026-10-11T20:00:00Z")!
         var activity = PalWorkActivity(activity: "thinking", jobID: UUID(), status: "accepted", expiresAt: "2026-10-11T20:01:00Z")

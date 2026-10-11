@@ -12,7 +12,7 @@ const source = readFileSync(resolve(ios, 'Pal/Mascot/Cloud.html'), 'utf8');
 const sourceHash = '12a1bac5b8e7326a8f680d142936281719c708999500f5c89226ac81ac8e57af';
 assert.equal(createHash('sha256').update(source).digest('hex'), sourceHash, 'Review the supplied engine before changing its sampling adapter.');
 const emotions = ['fier', 'heureux', 'hilare', 'curieux', 'confus', 'surpris', 'timide', 'triste', 'colere', 'somnolent', 'attentif', 'neutre'];
-const frameCount = 32, duration = 4, pixels = 128;
+const frameCount = 64, duration = 4, pixels = 192;
 const svg = { innerHTML: '', setAttribute() {} };
 const context = vm.createContext({
   window: {}, document: { querySelector: () => svg, addEventListener() {}, hidden: false },

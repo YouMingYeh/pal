@@ -16,7 +16,9 @@ do $$
 declare activity jsonb; j public.agent_jobs; n bigint;
 begin
   activity:=public.pal_group_state(current_setting('pal.mascot.group')::uuid)->'pal_activity';
-  assert activity->>'activity'='idle' and activity->>'job_id' is null,'Debounced future chat does not pretend generation started';
+  assert activity->>'activity'='thinking' and activity->>'status'='accepted','New queued chat animates immediately during its existing debounce';
+  assert (activity->>'expires_at')::timestamptz=now()+interval '5 minutes','Future accepted work has a deadline bounded from creation';
+  update public.agent_jobs set status='cancelled' where group_id=current_setting('pal.mascot.group')::uuid and id<>current_setting('pal.mascot.job')::uuid;
   update public.agent_jobs set run_after=now() where id=current_setting('pal.mascot.job')::uuid;
   activity:=public.pal_group_state(current_setting('pal.mascot.group')::uuid)->'pal_activity';
   assert activity->>'activity'='thinking' and activity->>'status'='accepted' and activity->>'job_id'=current_setting('pal.mascot.job'),'Accepted due chat exposes its actual stable job ID';
@@ -45,16 +47,16 @@ begin
   assert (select emotion='heureux' and body='Done' from public.messages where source_key='job:'||j.id),'Completed retry preserves original body and emotion';
   assert public.pal_group_state(j.group_id)->'pal_activity'->>'activity'='idle','Completion clears real activity';
   assert (select count(*)=4 from public.agent_jobs where group_id=j.group_id),'Pal reply does not loop into another job';
-  update public.agent_jobs set run_after=now() where message_id in(select id from public.messages where client_id='41000000-0000-4000-8000-000000000002');
+  update public.agent_jobs set status='queued',run_after=now() where message_id in(select id from public.messages where client_id='41000000-0000-4000-8000-000000000002');
   select * into j from public.claim_agent_jobs(1);
   assert public.complete_agent_job(j.id,j.attempts,'Legacy response'),'Old three-argument caller remains compatible';
   assert (select emotion='fier' from public.messages where source_key='job:'||j.id),'Old caller defaults to fier';
-  update public.agent_jobs set run_after=now() where message_id in(select id from public.messages where client_id='41000000-0000-4000-8000-000000000003');
+  update public.agent_jobs set status='queued',run_after=now() where message_id in(select id from public.messages where client_id='41000000-0000-4000-8000-000000000003');
   select * into j from public.claim_agent_jobs(1);
   n:=(select count(*) from public.messages where group_id=j.group_id);
   assert public.complete_agent_job_with_emotion(j.id,j.attempts,'',null,'confus'),'Silent passive completion remains valid';
   assert (select count(*)=n from public.messages where group_id=j.group_id),'Silent completion invents no message or emotion';
-  update public.agent_jobs set run_after=now() where message_id in(select id from public.messages where client_id='41000000-0000-4000-8000-000000000004');
+  update public.agent_jobs set status='queued',run_after=now() where message_id in(select id from public.messages where client_id='41000000-0000-4000-8000-000000000004');
   select * into j from public.claim_agent_jobs(1);
   insert into public.messages(group_id,role,body,source_key,emotion) values(j.group_id,'pal','Original reply','job:'||j.id,'curieux');
   assert public.complete_agent_job_with_emotion(j.id,j.attempts,'Replayed reply',null,'triste'),'Existing unique job source may finish safely';

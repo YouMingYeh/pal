@@ -10,6 +10,7 @@ final class PalStore: ObservableObject {
     @Published var notice: String?
     @Published var pushRegistrationIssue: String?
     @Published private(set) var states: [UUID: GroupState] = [:]
+    @Published private(set) var typingHints: [UUID: PalTypingHint] = [:]
     @Published private(set) var cachedMessages: [UUID: [ChatMessage]] = [:]
     @Published private(set) var profile: PalProfile?
     @Published var path: [UUID] = []
@@ -164,6 +165,7 @@ final class PalStore: ObservableObject {
         messageCache.prune(groupIDs: allowed)
         cachedMessages = messageCache.messages
         states = states.filter { allowed.contains($0.key) }
+        typingHints = typingHints.filter { allowed.contains($0.key) }
         if let open = path.last, !allowed.contains(open) { path = []; requestedEntity = nil }
         warmHistory(changed)
     }
@@ -251,6 +253,7 @@ final class PalStore: ObservableObject {
         guard sequence >= (appliedStateRequests[group.id] ?? 0) else { return }
         appliedStateRequests[group.id] = sequence
         states[group.id] = loaded
+        if typingHints[group.id]?.acceptsState(sequence: sequence) == true { typingHints[group.id] = nil }
     }
 
     func mutate(_ group: ChatGroup, action: String, data: [String: JSONValue]) async throws {
@@ -415,6 +418,7 @@ final class PalStore: ObservableObject {
     }
     func retry(_ item: OutgoingMessage, group: ChatGroup) async {
         guard item.userID == userID else { return }
+        if states[group.id]?.settings?.agentPaused != true { typingHints[group.id] = PalTypingHint(clientID: item.clientID) }
         if let index = outgoing.firstIndex(where: { $0.clientID == item.clientID }) { outgoing[index].failed = false }
         persistOutgoing()
         do {
@@ -424,6 +428,7 @@ final class PalStore: ObservableObject {
             } else { _ = try await send(item.body, to: group, clientID: item.clientID, replyTo: item.replyToID) }
             outgoing.removeAll { $0.clientID == item.clientID }
         } catch {
+            if typingHints[group.id]?.clientID == item.clientID { typingHints[group.id] = nil }
             if let index = outgoing.firstIndex(where: { $0.clientID == item.clientID }) { outgoing[index].failed = true; report(error) }
         }
         persistOutgoing()
@@ -451,6 +456,7 @@ final class PalStore: ObservableObject {
         states = [:]
         messageCache.clear()
         cachedMessages = [:]
+        typingHints = [:]
         profile = nil
         path = []
         requestedEntity = nil
@@ -487,9 +493,20 @@ final class PalStore: ObservableObject {
     private func acknowledge(_ message: ChatMessage) {
         messageCache.acknowledge(message)
         cachedMessages = messageCache.messages
+        if message.role == "user", typingHints[message.groupID]?.clientID == message.clientID {
+            typingHints[message.groupID]?.posted(after: stateRequests[message.groupID] ?? 0)
+        }
         if let index = groups.firstIndex(where: { $0.id == message.groupID }) {
             groups[index].lastMessage = GroupLastMessage(id: message.id, body: message.body, createdAt: message.createdAt, role: message.role)
         }
+    }
+
+    func isPalTyping(in groupID: UUID, at now: Date = Date()) -> Bool {
+        guard states[groupID]?.settings?.agentPaused != true else { return false }
+        return typingHints[groupID]?.isVisible(at: now) == true || states[groupID]?.palActivity?.isThinking(at: now) == true
+    }
+    func typingDeadline(in groupID: UUID) -> Date? {
+        [typingHints[groupID]?.expiresAt, states[groupID]?.palActivity?.expiresAt.flatMap(PalDate.date)].compactMap { $0 }.max()
     }
 
     var realtimeIdentity: String {

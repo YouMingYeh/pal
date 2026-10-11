@@ -8,11 +8,15 @@ final class MascotTests: XCTestCase {
         for emotion in PalMascotEmotion.all {
             let image = try XCTUnwrap(PalMascotFrames.image(for: emotion))
             let frames = try XCTUnwrap(image.images)
-            XCTAssertEqual(frames.count, 32)
-            XCTAssertEqual(image.duration, 4)
-            XCTAssertEqual(frames.first?.size, CGSize(width: 128, height: 128))
+            XCTAssertEqual(frames.count, 126)
+            XCTAssertEqual(image.duration, 7.875)
+            XCTAssertEqual(frames.first?.size, CGSize(width: 192, height: 192))
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(frames.first?.cgImage).width, 126, "A 42-point frame must stay crisp on a 3× display.")
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(UIImage(named: "PalMascot-" + emotion)?.cgImage).width, 432, "The 96-point launch/login mascot must also avoid 3× upsampling.")
             XCTAssertTrue(image === PalMascotFrames.image(for: emotion))
-            XCTAssertNotEqual(frames[0].pngData(), frames[12].pngData(), "The supplied engine blink must change the actual rendered face.")
+            XCTAssertTrue(frames.last === frames[1], "The loop returns through adjacent actual samples, rather than jumping from four seconds to zero.")
+            XCTAssertTrue(frames[64] === frames[62], "The return path reuses decoded images and avoids extra raster memory.")
+            XCTAssertNotEqual(frames[0].pngData(), frames[24].pngData(), "The supplied engine blink must change the actual rendered face.")
         }
         XCTAssertTrue(PalMascotFrames.image(for: "unknown") === PalMascotFrames.image(for: "fier"))
     }
@@ -23,9 +27,10 @@ final class MascotTests: XCTestCase {
         let window = try XCTUnwrap(scene.windows.first(where: \.isKeyWindow))
         let previous = window.rootViewController
         let host = UIHostingController(rootView: AnyView(VStack(spacing: 25) {
-            PalMascotAvatar(emotion: "fier", animated: true, size: 40)
-            PalMascotAvatar(emotion: "heureux", animated: true, size: 40)
-            PalMascotAvatar(emotion: "triste", animated: true, size: 40)
+            PalMascotAvatar(emotion: "fier", animated: true, size: 28)
+            PalMascotAvatar(emotion: "heureux", animated: true, size: 28)
+            PalMascotAvatar(emotion: "triste", animated: true, size: 28)
+            PalMascotAvatar(emotion: "curieux", animated: true, size: 40)
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.white)
             .environment(\.scenePhase, .active)))
         window.rootViewController = host
@@ -35,13 +40,17 @@ final class MascotTests: XCTestCase {
             ((view as? UIImageView).map { [$0] } ?? []) + view.subviews.flatMap(players)
         }
         let deadline = Date().addingTimeInterval(3)
-        while players(host.view).filter({ $0.animationImages != nil }).count < 3, Date() < deadline {
+        while players(host.view).filter({ $0.animationImages != nil }).count < 4, Date() < deadline {
             try await Task.sleep(for: .milliseconds(50))
         }
         let animated = players(host.view).filter { $0.animationImages != nil }
         let screenshot = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) })
         screenshot.name = "Mounted native mascot runtime"; screenshot.lifetime = .keepAlways; add(screenshot)
-        XCTAssertEqual(animated.count, 3, "Every visible avatar must reach the actual native frame player.")
+        XCTAssertEqual(animated.count, 4, "Every visible avatar must reach the actual native frame player.")
+        for (player, expected) in zip(animated, [42.0, 42.0, 42.0, 60.0]) {
+            XCTAssertEqual(player.bounds.width, expected, accuracy: 0.1, "The actual UIKit canvas must honor the SwiftUI avatar width.")
+            XCTAssertEqual(player.bounds.height, expected, accuracy: 0.1, "The actual UIKit canvas must honor the SwiftUI avatar height.")
+        }
         XCTAssertTrue(animated.allSatisfy { $0.isAnimating && $0.window != nil && $0.bounds.width > 0 })
         func pixels() -> [Data?] {
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
@@ -60,11 +69,20 @@ final class MascotTests: XCTestCase {
             for index in changed.indices where current[index] != initial[index] { changed[index] = true }
             if !changed.contains(false) { break }
         }
-        XCTAssertEqual(changed, [true, true, true], "Every actual avatar, including fier's blink, must render changing on-screen pixels.")
-        host.rootView = AnyView(PalMascotAvatar(emotion: "fier", animated: true, size: 40)
+        XCTAssertEqual(changed, [true, true, true, true], "Every actual avatar, including fier's blink, must render changing on-screen pixels.")
+        host.rootView = AnyView(PalMascotAvatar(emotion: "fier", animated: true, size: 28)
             .environment(\.scenePhase, .background))
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(players(host.view).contains { $0.isAnimating }, "Backgrounding must stop actual native rendering.")
+    }
+
+    @MainActor func testTypingLaneKeepsTheSameHeightWhenStatusChanges() {
+        for size in [DynamicTypeSize.large, .accessibility3] {
+            let idle = UIHostingController(rootView: PalTypingLane(visible: false, animated: false).environment(\.dynamicTypeSize, size))
+            let typing = UIHostingController(rootView: PalTypingLane(visible: true, animated: false).environment(\.dynamicTypeSize, size))
+            let bounds = CGSize(width: 320, height: 1000)
+            XCTAssertEqual(idle.sizeThatFits(in: bounds).height, typing.sizeThatFits(in: bounds).height, accuracy: 0.1, "Typing cannot shift transcript bubbles, including at accessible text sizes.")
+        }
     }
 
     @MainActor func testBundledPlayerRunsPausesTransfersAndDisposes() async throws {

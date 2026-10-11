@@ -24,12 +24,27 @@ async function send(label: string, groupId: string, body: string, expectJob: boo
   const ack = await api(`/api/groups/${groupId}/messages`, "POST", { body, client_id: randomUUID() });
   const atAck = checked(await db.from("agent_jobs").select("status,run_after,created_at,completed_at").eq("message_id", ack.data.message.id).maybeSingle());
   console.log(JSON.stringify({ label, headers_ms: ack.headersMs, body_ms: ack.bodyMs, job_status_at_ack: atAck?.status ?? "none" }));
+  if (process.argv.includes("--expect-typing") && ["paused-shared", "active-ordinary"].includes(label)) {
+    const { data: state } = await api(`/api/groups/${groupId}/state`);
+    if (label === "paused-shared") assert.equal(state.pal_activity.activity, "idle");
+    else {
+      assert.ok(atAck && Date.parse(atAck.run_after) > Date.now(), "The actual turn is still in its shared debounce window.");
+      assert.equal(state.pal_activity.activity, "thinking"); assert.equal(state.pal_activity.status, "accepted");
+      assert.ok(Date.parse(state.pal_activity.expires_at) <= Date.parse(atAck.created_at) + 300000, "Typing has a bounded acceptance expiry.");
+      assert.ok(Date.parse(atAck.run_after) - Date.parse(atAck.created_at) >= 9500, "Immediate typing must not remove the shared debounce.");
+      console.log("PASS: real future queued chat shows accepted typing immediately; paused chat remains idle.");
+    }
+  }
   if (!expectJob) { assert.equal(atAck, null); return; }
   const deadline = Date.now() + 90000;
   while (Date.now() < deadline) {
     const job = checked(await db.from("agent_jobs").select("status,created_at,completed_at").eq("message_id", ack.data.message.id).maybeSingle());
     if (job?.status === "completed") {
       console.log(JSON.stringify({ label, agent_total_ms: Date.parse(job.completed_at) - Date.parse(job.created_at) }));
+      if (process.argv.includes("--expect-typing")) {
+        const { data: state } = await api(`/api/groups/${groupId}/state`);
+        assert.equal(state.pal_activity.activity, "idle", "Typing stops when the actual job finishes, including silent turns.");
+      }
       return;
     }
     if (job?.status === "failed") throw new Error(`${label}: real agent job failed.`);
@@ -52,8 +67,10 @@ try {
   await send("paused-shared", groupId, "Checking message acknowledgement while Pal is paused.", false);
   await api(`/api/groups/${groupId}/state`, "POST", { action: "group.settings", data: { agent_paused: false } });
   await send("active-ordinary", groupId, "I prefer quiet places.", true);
-  await send("active-mention", groupId, "@Pal what preference did I just share? Reply in one sentence.", true);
-  await send("private-direct", direct.id, "Say hello in one short sentence.", true);
+  if (!process.argv.includes("--typing-only")) {
+    await send("active-mention", groupId, "@Pal what preference did I just share? Reply in one sentence.", true);
+    await send("private-direct", direct.id, "Say hello in one short sentence.", true);
+  }
 } finally {
   if (owner) {
     for (const group of checked(await db.from("groups").select("id").eq("creator_id", owner)) ?? []) groups.add(group.id);

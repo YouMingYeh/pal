@@ -379,6 +379,17 @@ struct PalWorkActivity: Decodable, Equatable {
     }
 }
 
+/// An optimistic status ends at the first authoritative state read after its POST, or at a bounded deadline.
+struct PalTypingHint {
+    let clientID: UUID
+    let expiresAt: Date
+    private(set) var postedAfterSequence: Int?
+    init(clientID: UUID, now: Date = Date()) { self.clientID = clientID; expiresAt = now.addingTimeInterval(120) }
+    mutating func posted(after sequence: Int) { postedAfterSequence = sequence }
+    func acceptsState(sequence: Int) -> Bool { postedAfterSequence.map { sequence > $0 } ?? false }
+    func isVisible(at now: Date = Date()) -> Bool { now < expiresAt }
+}
+
 struct PalProfile: Decodable {
     struct Preferences: Decodable { var enabled: Bool? }
     var userID: UUID?

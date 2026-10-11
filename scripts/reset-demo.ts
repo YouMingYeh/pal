@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, chmod, access } from "node:fs/promises";
 import { resolve } from "node:path";
+import sharp from "sharp";
 import { admin, checked, env } from "../lib/db";
-import { normalizeAvatar } from "../lib/avatar";
+import { normalizeAvatar, AVATAR_MAX_BYTES } from "../lib/avatar";
+import { ownsGroupPhoto } from "../lib/group-avatar";
 import { resolvePlace } from "../lib/maps";
 
 // Fictional prototype characters. Portraits: Pravatar CC0, https://pravatar.cc/.
@@ -85,6 +87,24 @@ function upcomingLocal(day: number, hour: number, minute: number) {
   return new Date(`${date}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00${match[1]}${match[2].padStart(2, "0")}:${match[3] ?? "00"}`).toISOString();
 }
 type Manifest = { version: 1; project: string; human: string; marker: string; created_at: string; teammates: string[]; actors: (typeof actors[number] & { id: string; avatar: string })[]; places: Awaited<ReturnType<typeof resolvePlace>>[number][] };
+async function groupPortrait(room: typeof rooms[number], manifest: Manifest) {
+  assert.equal(room.actors.length, 4);
+  const portraits = await Promise.all(room.actors.map(async (key, index) => {
+    const actor = manifest.actors.find(actor => actor.key === key); assert.ok(actor);
+    const input = Buffer.from(actor.avatar, "base64"); assert.ok(input.length <= AVATAR_MAX_BYTES);
+    const metadata = await sharp(input, { limitInputPixels: 25_000_000 }).metadata();
+    assert.equal(metadata.format, "jpeg"); assert.equal(metadata.exif, undefined);
+    assert.ok(metadata.width && metadata.width <= 1024 && metadata.height && metadata.height <= 1024);
+    return { input: await sharp(input).resize(256, 256, { fit: "cover", position: "attention" }).toBuffer(),
+      left: index % 2 * 256, top: Math.floor(index / 2) * 256 };
+  }));
+  const image = await sharp({ create: { width: 512, height: 512, channels: 3, background: "white" } })
+    .composite(portraits).jpeg({ quality: 88, mozjpeg: true }).toBuffer();
+  const metadata = await sharp(image).metadata();
+  assert.equal(metadata.format, "jpeg"); assert.equal(metadata.width, 512); assert.equal(metadata.height, 512);
+  assert.equal(metadata.exif, undefined); assert.ok(image.length <= AVATAR_MAX_BYTES);
+  return image;
+}
 if (args.includes("--prepare")) {
   const human = await db.auth.admin.getUserById(HUMAN); assert.ifError(human.error); assert.ok(human.data.user);
   const teammates = args.filter(arg => arg.startsWith("--teammate=")).map(arg => arg.slice(11));
@@ -102,6 +122,7 @@ if (args.includes("--prepare")) {
     const candidates = await resolvePlace(query); assert.ok(candidates.length, `No verified place for ${query}.`); verifiedPlaces.push(candidates[0]);
   }
   const manifest: Manifest = { version: 1, project: PROJECT, human: HUMAN, marker: randomUUID(), created_at: new Date().toISOString(), teammates, actors: portraits, places: verifiedPlaces };
+  await Promise.all(rooms.map(room => groupPortrait(room, manifest)));
   const path = resolve(secretDir, `demo-seed-${manifest.marker}.json`); await secureWrite(path, manifest);
   console.log(`Prepared ${rooms.length} rooms and eight fictional photo profiles without clearing live chat. Manifest: ${path}`);
 } else {
@@ -134,6 +155,14 @@ if (args.includes("--prepare")) {
   const oldGroups = backup.groups as { id: string; is_direct: boolean; creator_id: string }[];
   const ownDirect = oldGroups.find(group => group.is_direct && group.creator_id === HUMAN);
   const previousGroups = oldGroups.filter(group => !group.is_direct && currentShared.has(group.id)).map(group => group.id);
+  // Validate and upload each room's existing-member photo collage before clearing
+  // live chat, alongside the staged fictional profile portraits.
+  const groupPhotos = await Promise.all(rooms.map(async room => {
+    const image = await groupPortrait(room, manifest), avatarPath = `groups/${HUMAN}/${randomUUID()}.jpg`;
+    assert.ok(ownsGroupPhoto(HUMAN, avatarPath));
+    checked(await db.storage.from("avatars").upload(avatarPath, image, { contentType: "image/jpeg", cacheControl: "3600", upsert: false }));
+    return avatarPath;
+  }));
   // Build all identities/photos BEFORE clearing anything. Reruns reuse only this manifest's marker.
   const actorIds = new Map<string, string>([["human", HUMAN]]);
   for (const actor of manifest.actors) {
@@ -156,7 +185,7 @@ if (args.includes("--prepare")) {
   if (previousGroups.length) checked(await db.from("groups").delete().in("id", previousGroups));
   for (let roomIndex = 0; roomIndex < rooms.length; roomIndex++) {
     const room = rooms[roomIndex], groupId = randomUUID(); seededIds.push(groupId);
-    checked(await db.from("groups").insert({ id: groupId, name: room.name, creator_id: HUMAN, agent_paused: true, proactive_suggestions: false, timezone: "America/Los_Angeles", last_weekly_at: new Date().toISOString() }));
+    checked(await db.from("groups").insert({ id: groupId, name: room.name, creator_id: HUMAN, avatar_path: groupPhotos[roomIndex], agent_paused: true, proactive_suggestions: false, timezone: "America/Los_Angeles", last_weekly_at: new Date().toISOString() }));
     const start = now - (3 - roomIndex) * 86400000;
     const messages = room.lines.map(([speaker, original, emotion], index) => {
       const body = original.replace("Friday after 7pm", `${dateLabel(dates[0])} after 7pm`).replace("Saturday noon", `${dateLabel(dates[1])} at noon`).replace("Lunch tomorrow?", `Lunch ${dateLabel(dates[2])}?`);
