@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { writeFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
+import { Client } from "eve/client";
 import { admin, checked, env } from "../lib/db";
 
 // Run only after the matching production build and capture migration are deployed.
@@ -23,6 +24,7 @@ const users = await Promise.all(["ALICE", "BOB"].map(async name => {
 }));
 const [alice, bob] = users;
 const completedJobs = new Map<string, { id: string; attempts: number }>();
+const toolTrace = new Map<string, unknown>();
 let sawThinking = false;
 type User = typeof alice;
 type ResponseRow = { user_id: string; option_ids: string[]; source_message_id: string | null };
@@ -49,6 +51,23 @@ async function sendAndWait(user: User, body: string) {
       const job = checked(await db.from("agent_jobs").select("status,explicit_mention,batch_message_ids,result,attempts")
         .eq("id", trigger.coalesced_into || trigger.id).single());
       assert.ok(job, "Observed source job disappeared.");
+      if (job.status === "running" && job.result) {
+        const sessionId = JSON.parse(job.result).sessionId;
+        if (sessionId) {
+          // Bounded read-only snapshots detach without cancelling the real turn.
+          // Job auth deliberately expires on completion; a racing final read is harmless.
+          const client = new Client({ host: base, redirect: "error", auth: { bearer: env("PAL_INTERNAL_SECRET") },
+            headers: { "x-pal-job-id": trigger.coalesced_into || trigger.id } });
+          try {
+            for await (const event of client.sessions.attach(sessionId).stream({ startIndex: 0, follow: false,
+              signal: AbortSignal.timeout(7000), streamReconnectPolicy: { reconnect: false } })) {
+              if (["actions.requested", "action.result", "result.completed"].includes(event.type)) {
+                toolTrace.set(event.meta.id, { job_id: trigger.coalesced_into || trigger.id, type: event.type, data: event.data });
+              }
+            }
+          } catch { /* Diagnostics cannot fail or restart the actual worker. */ }
+        }
+      }
       assert.equal(job.explicit_mention, false, "Ordinary messages must not require @Pal.");
       const state = await api(alice, `/api/groups/${groupId}/state`);
       assert.ok(state.pal_activity, "The deployed state must expose actual Pal activity.");
@@ -158,7 +177,9 @@ try {
       db.from("poll_responses").select("poll_id,user_id,option_ids,source_message_id").eq("group_id", groupId),
       db.from("plan_rsvps").select("plan_id,user_id,status,source_message_id").eq("group_id", groupId),
     ]);
-    await writeFile(".secrets/conversation-smoke-failure.json", JSON.stringify(diagnostics.map(result => ({ data: result.data, error: result.error?.code ?? null })), null, 2), { mode: 0o600 });
+    await writeFile(".secrets/conversation-smoke-failure.json", JSON.stringify({
+      tool_trace: [...toolTrace.values()], snapshots: diagnostics.map(result => ({ data: result.data, error: result.error?.code ?? null })),
+    }, null, 2), { mode: 0o600 });
   }
   throw error;
 } finally {

@@ -79,6 +79,10 @@ async function removeUnused(group: string, owner: string, path: string) {
 }
 
 export async function sendAttachment(group: string, owner: string, input: Input, file: File) {
+  // Foundation UUID URLs are uppercase; database UUIDs and private paths use one
+  // canonical representation regardless of the client's spelling.
+  group = id.parse(group).toLowerCase();
+  owner = id.parse(owner).toLowerCase();
   const media = await normalizeAttachment(file, input.kind), db = admin();
   const existing = checked(await db.from("message_attachments").select("*").eq("group_id", group).eq("uploader_id", owner).eq("client_id", input.client_id).maybeSingle()) as Attachment | null;
   // A replay passes through the authoritative RPC without uploading another blob.

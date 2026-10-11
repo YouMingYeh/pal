@@ -55,7 +55,8 @@ try {
   assert.ok(!(await fetch(db.storage.from("avatars").getPublicUrl(storedGroup.avatar_path).data.publicUrl)).ok);
   console.log("PASS: name/photo creation is atomic, retry-safe and visible only through authorized group reads.");
   const photoId = randomUUID(), audioId = randomUUID();
-  const endpoint = `/api/groups/${group.id}/attachments`;
+  // Exercise Foundation's UUID spelling at the real upload/storage boundary.
+  const endpoint = `/api/groups/${group.id.toUpperCase()}/attachments`;
   const photoResponse = await call(owner, endpoint, "POST", mediaForm("image", photoId, picture));
   assert.equal(photoResponse.status, 201); const photo = (await photoResponse.json()).message;
   const photoRetry = await call(owner, endpoint, "POST", mediaForm("image", photoId, picture));
