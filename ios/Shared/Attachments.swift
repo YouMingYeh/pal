@@ -14,7 +14,7 @@ struct DraftAttachment: Codable, Identifiable, Equatable {
     var durationMS: Int?
 }
 
-struct ChatAttachment: Codable, Identifiable {
+struct ChatAttachment: Codable, Identifiable, Equatable {
     var id: UUID
     var kind: String
     var url: URL?

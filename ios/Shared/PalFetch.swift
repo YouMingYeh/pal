@@ -45,6 +45,13 @@ struct PalFetchState: Equatable {
     var hasLoaded = false
     var issue: String?
 
+    // Background refreshes keep confirmed content visible without invalidating the entire chat.
+    var presentation: PalFetchState {
+        var value = self
+        value.requests = isLoading && (!hasLoaded || issue != nil) ? 1 : 0
+        return value
+    }
+
     mutating func begin() { requests += 1; issue = nil }
     mutating func finish() { requests = max(0, requests - 1); hasLoaded = true; issue = nil }
     mutating func fail(_ error: Error) {

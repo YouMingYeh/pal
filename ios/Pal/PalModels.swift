@@ -26,14 +26,12 @@ indirect enum JSONValue: Codable, Equatable {
 }
 
 enum PalDate {
+    private static let fractional = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    private static let whole = Date.ISO8601FormatStyle()
     static func date(_ string: String) -> Date? {
-        let format = ISO8601DateFormatter()
-        format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = format.date(from: string) { return date }
-        format.formatOptions = [.withInternetDateTime]
-        return format.date(from: string)
+        (try? fractional.parse(string)) ?? (try? whole.parse(string))
     }
-    static func iso(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
+    static func iso(_ date: Date) -> String { whole.format(date) }
 }
 
 struct ChatGroup: Codable, Identifiable, Hashable {
@@ -75,7 +73,7 @@ struct MessageMention: Codable, Hashable {
     var userID: UUID? = nil
     enum CodingKeys: String, CodingKey { case type; case userID = "user_id" }
 }
-struct MessageReply: Decodable {
+struct MessageReply: Decodable, Equatable {
     var id: UUID
     var senderID: UUID?
     var role: String
@@ -83,7 +81,7 @@ struct MessageReply: Decodable {
     enum CodingKeys: String, CodingKey { case id, role, body; case senderID = "sender_id" }
 }
 
-struct ChatMessage: Decodable, Identifiable {
+struct ChatMessage: Decodable, Identifiable, Equatable {
     let id: UUID
     let groupID: UUID
     let senderID: UUID?
@@ -179,6 +177,7 @@ struct ChatMessage: Decodable, Identifiable {
 }
 
 enum PalText {
+    private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
     static func linked(_ body: String, markdown: Bool = false, mentions: [MessageMention] = [], members: [GroupMember] = []) -> AttributedString {
         var result = markdown ? ((try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(body)) : AttributedString(body)
         let names = mentions.compactMap { mention in mention.type == "pal" ? "Pal" : members.first { $0.userID == mention.userID }?.displayName }
@@ -191,7 +190,7 @@ enum PalText {
             }
         }
         let visible = String(result.characters)
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return result }
+        guard let detector = linkDetector else { return result }
         for match in detector.matches(in: visible, range: NSRange(visible.startIndex..., in: visible)) {
             guard let url = match.url, ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
                   let stringRange = Range(match.range, in: visible), let range = Range(stringRange, in: result) else { continue }
@@ -223,7 +222,7 @@ enum PalMentions {
     }
 }
 
-struct GroupMember: Decodable, Identifiable {
+struct GroupMember: Decodable, Identifiable, Equatable {
     var userID: UUID
     var displayName: String?
     var avatarURL: String?
@@ -232,7 +231,7 @@ struct GroupMember: Decodable, Identifiable {
     var id: UUID { userID }
     enum CodingKeys: String, CodingKey { case userID = "user_id", displayName = "display_name", avatarURL = "avatar_url", lastReadAt = "last_read_at", lastReadMessageID = "last_read_message_id" }
 }
-struct PlaceCandidate: Decodable, Identifiable {
+struct PlaceCandidate: Decodable, Identifiable, Equatable {
     var id: String?
     var name: String
     var address: String?
@@ -242,13 +241,13 @@ struct PlaceCandidate: Decodable, Identifiable {
     var provider: String?
     enum CodingKeys: String, CodingKey { case id,name,address,latitude,longitude,provider; case providerID = "provider_id" }
 }
-struct PlaceContributor: Decodable {
+struct PlaceContributor: Decodable, Equatable {
     var userID: UUID
     var sourceID: UUID?
     enum CodingKeys: String, CodingKey { case userID = "user_id", sourceID = "source_id" }
 }
 
-struct GroupPlace: Decodable, Identifiable {
+struct GroupPlace: Decodable, Identifiable, Equatable {
     var id: UUID
     var name: String
     var address: String?
@@ -263,7 +262,7 @@ struct GroupPlace: Decodable, Identifiable {
     var contributors: [PlaceContributor]?
     enum CodingKeys: String, CodingKey { case id,name,address,latitude,longitude,provider,status,candidates,website,contributors; case providerID = "provider_id", bookingURL = "booking_url" }
 }
-struct GroupSource: Decodable, Identifiable {
+struct GroupSource: Decodable, Identifiable, Equatable {
     var id: UUID
     var url: String?
     var title: String?
@@ -288,7 +287,7 @@ struct GroupSource: Decodable, Identifiable {
         return nil
     }
 }
-struct SourceCandidate: Decodable {
+struct SourceCandidate: Decodable, Equatable {
     var name: String
     var city: String?
     var address: String?
@@ -298,7 +297,7 @@ struct SourceCandidate: Decodable {
     var confidence: JSONValue?
     var options: [PlaceCandidate]?
 }
-struct PollOption: Decodable, Identifiable {
+struct PollOption: Decodable, Identifiable, Equatable {
     var id: String
     var label: String
     var startsAt: String?
@@ -306,17 +305,17 @@ struct PollOption: Decodable, Identifiable {
     var placeID: UUID?
     enum CodingKeys: String, CodingKey { case id,label; case startsAt = "starts_at", endsAt = "ends_at", placeID = "place_id" }
 }
-struct PollVote: Decodable {
+struct PollVote: Decodable, Equatable {
     var userID: UUID
     var optionID: String
     enum CodingKeys: String, CodingKey { case userID = "user_id", optionID = "option_id" }
 }
-struct PollResponse: Decodable {
+struct PollResponse: Decodable, Equatable {
     var userID: UUID
     var optionIDs: [String]
     enum CodingKeys: String, CodingKey { case userID = "user_id", optionIDs = "option_ids" }
 }
-struct GroupPoll: Decodable, Identifiable {
+struct GroupPoll: Decodable, Identifiable, Equatable {
     var id: UUID
     var kind: String
     var question: String
@@ -345,12 +344,12 @@ struct GroupPoll: Decodable, Identifiable {
     }
     enum CodingKeys: String, CodingKey { case id,kind,question,options,status,votes,responses; case deadlineAt = "deadline_at" }
 }
-struct PlanAttendee: Decodable {
+struct PlanAttendee: Decodable, Equatable {
     var userID: UUID
     var status: String
     enum CodingKeys: String, CodingKey { case userID = "user_id", status }
 }
-struct GroupPlan: Decodable, Identifiable {
+struct GroupPlan: Decodable, Identifiable, Equatable {
     var id: UUID
     var title: String
     var startsAt: String?
@@ -373,7 +372,7 @@ struct GroupPlan: Decodable, Identifiable {
     }
     enum CodingKeys: String, CodingKey { case id,title,status,notes,attendees,version; case startsAt = "starts_at", endsAt = "ends_at", placeID = "place_id", bookingStatus = "booking_status", bookingReference = "booking_reference" }
 }
-struct GroupMemory: Decodable, Identifiable {
+struct GroupMemory: Decodable, Identifiable, Equatable {
     var id: UUID
     var userID: UUID?
     var kind: String
@@ -386,7 +385,7 @@ struct GroupMemory: Decodable, Identifiable {
     }
     enum CodingKeys: String, CodingKey { case id,kind,key,value,body; case userID = "user_id", expiresAt = "expires_at" }
 }
-struct GroupReminder: Decodable, Identifiable {
+struct GroupReminder: Decodable, Identifiable, Equatable {
     var id: UUID
     var body: String
     var dueAt: String
@@ -400,20 +399,20 @@ struct GroupReminder: Decodable, Identifiable {
     func canEdit(userID: UUID?) -> Bool { userID != nil && requesterID == userID && (kind ?? "reminder") == "reminder" && status == "scheduled" }
     enum CodingKeys: String, CodingKey { case id,body,timezone,status,kind; case dueAt = "due_at", planID = "plan_id", pollID = "poll_id", targetUserIDs = "target_user_ids", requesterID = "requester_id" }
 }
-struct MessageReaction: Decodable {
+struct MessageReaction: Decodable, Equatable {
     var messageID: UUID
     var userID: UUID?
     var emoji: String
     enum CodingKeys: String, CodingKey { case messageID = "message_id", userID = "user_id", emoji }
 }
-struct GroupSettings: Decodable {
+struct GroupSettings: Decodable, Equatable {
     var timezone: String?
     var proactiveSuggestions: Bool?
     var agentPaused: Bool?
     var name: String?
     enum CodingKeys: String, CodingKey { case timezone,name; case proactiveSuggestions = "proactive_suggestions", agentPaused = "agent_paused" }
 }
-struct GroupState: Decodable {
+struct GroupState: Decodable, Equatable {
     var members: [GroupMember]
     var places: [GroupPlace]
     var sources: [GroupSource]
@@ -454,8 +453,8 @@ struct PalTypingHint {
     func isVisible(at now: Date = Date()) -> Bool { now < expiresAt }
 }
 
-struct PalProfile: Decodable {
-    struct Preferences: Decodable { var enabled: Bool? }
+struct PalProfile: Decodable, Equatable {
+    struct Preferences: Decodable, Equatable { var enabled: Bool? }
     var userID: UUID?
     var displayName: String?
     var avatarURL: String?
@@ -468,7 +467,7 @@ struct CalendarStatus: Decodable {
     enum CodingKeys: String, CodingKey { case connected; case syncError = "sync_error" }
 }
 
-struct OutgoingMessage: Codable, Identifiable {
+struct OutgoingMessage: Codable, Identifiable, Equatable {
     var groupID: UUID
     var userID: UUID
     var clientID: UUID

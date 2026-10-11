@@ -27,9 +27,9 @@ final class MascotTests: XCTestCase {
         let window = try XCTUnwrap(scene.windows.first(where: \.isKeyWindow))
         let previous = window.rootViewController
         let host = UIHostingController(rootView: AnyView(VStack(spacing: 25) {
-            PalMascotAvatar(emotion: "fier", animated: true, size: 32)
-            PalMascotAvatar(emotion: "heureux", animated: true, size: 32)
-            PalMascotAvatar(emotion: "triste", animated: true, size: 32)
+            PalMascotAvatar(emotion: "fier", animated: true, size: 54)
+            PalMascotAvatar(emotion: "heureux", animated: true, size: 36)
+            PalMascotAvatar(emotion: "triste", animated: true, size: 36)
             PalMascotAvatar(emotion: "curieux", animated: true, size: 40)
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.white)
             .environment(\.scenePhase, .active)))
@@ -47,11 +47,12 @@ final class MascotTests: XCTestCase {
         let screenshot = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) })
         screenshot.name = "Mounted native mascot runtime"; screenshot.lifetime = .keepAlways; add(screenshot)
         XCTAssertEqual(animated.count, 4, "Every visible avatar must reach the actual native frame player.")
-        for (player, expected) in zip(animated, [48.0, 48.0, 48.0, 60.0]) {
+        for (player, expected) in zip(animated, [81.0, 54.0, 54.0, 60.0]) {
             XCTAssertEqual(player.bounds.width, expected, accuracy: 0.1, "The actual UIKit canvas must honor the SwiftUI avatar width.")
             XCTAssertEqual(player.bounds.height, expected, accuracy: 0.1, "The actual UIKit canvas must honor the SwiftUI avatar height.")
         }
         XCTAssertTrue(animated.allSatisfy { $0.isAnimating && $0.window != nil && $0.bounds.width > 0 })
+        XCTAssertNotNil(animated.first?.layer.animation(forKey: "PalMascotBody"), "The inbox/header's idle avatar must breathe between its blinks.")
         func pixels() -> [Data?] {
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
             return animated.map { view in

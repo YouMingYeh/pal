@@ -95,16 +95,16 @@ export const deviceInput = z.object({ token: z.string().regex(/^[a-fA-F0-9]{64,2
 export const palEmotions = ["fier", "heureux", "hilare", "curieux", "confus", "surpris", "timide", "triste", "colere", "somnolent", "attentif", "neutre"] as const;
 export const palEmotion = z.enum(palEmotions);
 const palOutput = z.object({
-  body: z.string().trim().min(1).max(4000),
+  body: z.string().trim().min(1).max(4000).describe("One conversational point, usually one or two short sentences. No report preamble or roleplay stage directions. Put the next conversational beat in another message when useful; preserve necessary facts when full details are requested."),
   emotion: palEmotion.catch("fier").optional(), reply_to_id: id.nullable().optional(),
   mentions: palMentions.optional(),
   card: z.object({ type: z.enum(["plan", "options", "availability", "rsvp", "choice"]), entity_id: id }).strict().nullable().optional()
     .describe("An existing same-group entity: plan for a future draft/confirmed plan; options for saved place/activity choices; availability for saved dated time choices. RSVP requires a future confirmed plan; choice is a legacy options alias. Never invent an entity or embed UI."),
 }).strict();
 export const agentReply = z.object({
-  reply: z.string().max(4000).describe("One natural chat reply. Use an empty string for genuine silence, or when messages supplies intentional separate replies."),
+  reply: z.string().max(4000).describe("One short friend-like text for a simple answer or acknowledgement. Use an empty string for genuine silence, or when messages supplies deliberate separate conversational beats."),
   emotion: palEmotion.catch("fier").optional().describe("The mascot expression matching this reply's actual tone; use fier when no more specific emotion fits."),
-  messages: z.array(palOutput).max(3).optional().describe("Optional deliberate separate chat messages. Normally reply once. Keep paragraph breaks in one body; never split mechanically. Tag only verified members; reply only to verified same-group human/Pal messages."),
+  messages: z.array(palOutput).max(3).optional().describe("Use two short messages when an answer has distinct conversational beats instead of one wall of text; a third only if useful. One simple answer stays one message. Do not split mechanically or repeat. Each bubble has its own tone. Tag only verified members; reply only to verified same-group human/Pal messages."),
 }).strict().superRefine((value, context) => {
   if (value.reply.trim() && value.messages?.length) context.addIssue({ code: "custom", message: "Choose a single reply or separate messages, never both." });
   if ((value.messages ?? []).reduce((sum, message) => sum + message.body.length, 0) > 4000) context.addIssue({ code: "custom", message: "Keep the entire reply within 4000 characters." });

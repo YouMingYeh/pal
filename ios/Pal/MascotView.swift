@@ -41,24 +41,18 @@ struct PalMascotAvatar: View {
         }
         .frame(width: size, height: size)
         .allowsHitTesting(false).accessibilityHidden(true)
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear { updateVisibility(geometry.frame(in: .global)) }
-                    .onChange(of: geometry.frame(in: .global)) { _, frame in updateVisibility(frame) }
-            }
-        }
+        .onGeometryChange(for: Bool.self) { geometry in
+            let frame = geometry.frame(in: .global)
+            let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows).first(where: \.isKeyWindow)
+            return window.map { frame.width > 0 && frame.height > 0 && frame.intersects($0.bounds) } ?? false
+        } action: { visible = $0 }
         .onAppear { appeared = true }
         .onDisappear { appeared = false; visible = false; ready = false }
         .onChange(of: live) { _, _ in ready = false }
         .onChange(of: animated) { _, _ in failed = false; ready = false }
         .onChange(of: activity) { _, _ in failed = false }
         .onChange(of: emotion) { _, _ in failed = false }
-    }
-    private func updateVisibility(_ frame: CGRect) {
-        let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows).first(where: \.isKeyWindow)
-        visible = window.map { frame.width > 0 && frame.height > 0 && frame.intersects($0.bounds) } ?? false
     }
     private var player: some View {
         MascotWebPlayer(expression: expression, ready: $ready, failed: $failed)
@@ -142,9 +136,13 @@ struct MascotFramePlayer: UIViewRepresentable {
             poses = [.identity, CGAffineTransform(translationX: -1, y: 0), CGAffineTransform(translationX: 1, y: 0), CGAffineTransform(translationX: -1, y: 0), .identity, .identity]
             times = [0, 0.2, 0.3, 0.4, 0.7, 1]; duration = 1.8
         default:
-            guard activity == .speaking else { return nil }
-            poses = [CGAffineTransform(rotationAngle: -.pi / 90), CGAffineTransform(translationX: 0, y: -2).rotated(by: .pi / 90), CGAffineTransform(rotationAngle: -.pi / 90)]
-            times = [0, 0.5, 1]; duration = 1.1
+            if activity == .speaking {
+                poses = [CGAffineTransform(rotationAngle: -.pi / 90), CGAffineTransform(translationX: 0, y: -2).rotated(by: .pi / 90), CGAffineTransform(rotationAngle: -.pi / 90)]
+                times = [0, 0.5, 1]; duration = 1.1
+            } else {
+                poses = [.identity, CGAffineTransform(scaleX: 1.025, y: 1.025), .identity]
+                times = [0, 0.5, 1]; duration = 2.8
+            }
         }
         // Match the supplied demo's emotion CSS without a SwiftUI redraw loop.
         let animation = CAKeyframeAnimation(keyPath: "transform")

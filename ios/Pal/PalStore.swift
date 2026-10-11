@@ -21,6 +21,8 @@ final class PalStore: ObservableObject {
     @Published private(set) var cachedCalendarStatus: CalendarStatus?
     private var calendarFetchedAt: Date?
     private let reads = PalFetchPool()
+    private enum FetchResource: Hashable { case groups, profile, messages(UUID), state(UUID) }
+    private var fetchActivity: [FetchResource: PalFetchState] = [:]
     private var accountGeneration = UUID()
     @Published var path: [UUID] = []
     @Published var requestedEntity: MessageCard?
@@ -44,6 +46,19 @@ final class PalStore: ObservableObject {
 
     var userID: UUID? { storedSession?.session.user.id }
     var isSignedIn: Bool { storedSession != nil }
+
+    private func updateFetch(_ resource: FetchResource, _ update: (inout PalFetchState) -> Void) {
+        var tracked = fetchActivity[resource, default: PalFetchState()]
+        update(&tracked)
+        fetchActivity[resource] = tracked
+        let visible = tracked.presentation
+        switch resource {
+        case .groups: if groupsFetch != visible { groupsFetch = visible }
+        case .profile: if profileFetch != visible { profileFetch = visible }
+        case .messages(let id): if messageFetch[id] != visible { messageFetch[id] = visible }
+        case .state(let id): if stateFetch[id] != visible { stateFetch[id] = visible }
+        }
+    }
 
     private func configuredURL(_ key: String) throws -> URL {
         guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String,
@@ -191,13 +206,13 @@ final class PalStore: ObservableObject {
 
     func loadGroups() async throws {
         let generation = accountGeneration
-        groupsFetch.begin()
+        updateFetch(.groups) { $0.begin() }
         do {
         groupRequest += 1
         let sequence = groupRequest
         struct Response: Decodable { let groups: [ChatGroup] }
         var loaded = try JSONDecoder().decode(Response.self, from: await api("/api/groups")).groups
-        guard sequence >= appliedGroupRequest else { groupsFetch.finish(); return }
+        guard sequence >= appliedGroupRequest else { updateFetch(.groups) { $0.finish() }; return }
         appliedGroupRequest = sequence
         let changed = loaded.filter { messageCache.needsRefresh(groupID: $0.id, latestMessageID: $0.lastMessage?.id) }
         for index in loaded.indices {
@@ -206,21 +221,25 @@ final class PalStore: ObservableObject {
                 loaded[index].lastMessage = GroupLastMessage(id: message.id, body: message.body, createdAt: message.createdAt, role: message.role)
             }
         }
-        groups = loaded
+        if groups != loaded { groups = loaded }
         let allowed = Set(loaded.map(\.id))
         messageCache.prune(groupIDs: allowed)
-        cachedMessages = messageCache.messages
-        states = states.filter { allowed.contains($0.key) }
-        memberSummaries = memberSummaries.filter { entry in
+        if cachedMessages != messageCache.messages { cachedMessages = messageCache.messages }
+        if states.keys.contains(where: { !allowed.contains($0) }) { states = states.filter { allowed.contains($0.key) } }
+        let retainedSummaries = memberSummaries.filter { entry in
             entry.key.split(separator: "/").first.flatMap { UUID(uuidString: String($0)) }.map { allowed.contains($0) } == true
         }
-        stateFetch = stateFetch.filter { allowed.contains($0.key) }
-        messageFetch = messageFetch.filter { allowed.contains($0.key) }
-        typingHints = typingHints.filter { allowed.contains($0.key) }
+        if retainedSummaries.count != memberSummaries.count { memberSummaries = retainedSummaries }
+        if stateFetch.keys.contains(where: { !allowed.contains($0) }) { stateFetch = stateFetch.filter { allowed.contains($0.key) } }
+        if messageFetch.keys.contains(where: { !allowed.contains($0) }) { messageFetch = messageFetch.filter { allowed.contains($0.key) } }
+        if typingHints.keys.contains(where: { !allowed.contains($0) }) { typingHints = typingHints.filter { allowed.contains($0.key) } }
+        fetchActivity = fetchActivity.filter { resource, _ in
+            switch resource { case .messages(let id), .state(let id): return allowed.contains(id); case .groups, .profile: return true }
+        }
         if let open = path.last, !allowed.contains(open) { path = []; requestedEntity = nil }
         warmHistory(loaded.filter { group in states[group.id] == nil || changed.contains(where: { $0.id == group.id }) })
-        groupsFetch.finish()
-        } catch { if accountGeneration == generation { groupsFetch.fail(error) }; throw error }
+        updateFetch(.groups) { $0.finish() }
+        } catch { if accountGeneration == generation { updateFetch(.groups) { $0.fail(error) } }; throw error }
     }
 
     func createGroup(name: String, avatarData: Data? = nil, clientID: UUID = UUID()) async throws {
@@ -283,17 +302,17 @@ final class PalStore: ObservableObject {
 
     func messages(in group: ChatGroup) async throws -> [ChatMessage] {
         let generation = accountGeneration
-        messageFetch[group.id, default: PalFetchState()].begin()
+        updateFetch(.messages(group.id)) { $0.begin() }
         do {
         let sequence = messageCache.beginFetch(groupID: group.id)
         struct Response: Decodable { let messages: [ChatMessage] }
         let loaded = try JSONDecoder().decode(Response.self, from: await api("/api/groups/\(group.id)/messages")).messages
         let merged = messageCache.acceptSnapshot(loaded, groupID: group.id, sequence: sequence)
-        cachedMessages = messageCache.messages
+        if cachedMessages != messageCache.messages { cachedMessages = messageCache.messages }
         reconcileOutgoing(with: merged)
-        messageFetch[group.id, default: PalFetchState()].finish()
+        updateFetch(.messages(group.id)) { $0.finish() }
         return merged
-        } catch { if accountGeneration == generation { messageFetch[group.id, default: PalFetchState()].fail(error) }; throw error }
+        } catch { if accountGeneration == generation { updateFetch(.messages(group.id)) { $0.fail(error) } }; throw error }
     }
 
     @discardableResult
@@ -313,31 +332,32 @@ final class PalStore: ObservableObject {
 
     func loadState(_ group: ChatGroup) async throws {
         let generation = accountGeneration
-        stateFetch[group.id, default: PalFetchState()].begin()
+        updateFetch(.state(group.id)) { $0.begin() }
         do {
         let sequence = (stateRequests[group.id] ?? 0) + 1
         stateRequests[group.id] = sequence
         let loaded = try JSONDecoder().decode(GroupState.self, from: await api("/api/groups/\(group.id)/state"))
-        guard sequence >= (appliedStateRequests[group.id] ?? 0) else { stateFetch[group.id, default: PalFetchState()].finish(); return }
+        guard sequence >= (appliedStateRequests[group.id] ?? 0) else { updateFetch(.state(group.id)) { $0.finish() }; return }
         appliedStateRequests[group.id] = sequence
-        states[group.id] = loaded
+        if states[group.id] != loaded { states[group.id] = loaded }
         let memberKeys = Set(loaded.members.map { MemberSummary.key(groupID: group.id, userID: $0.userID) })
-        memberSummaries = memberSummaries.filter { !$0.key.hasPrefix(group.id.uuidString + "/") || memberKeys.contains($0.key) }
+        let retainedSummaries = memberSummaries.filter { !$0.key.hasPrefix(group.id.uuidString + "/") || memberKeys.contains($0.key) }
+        if retainedSummaries.count != memberSummaries.count { memberSummaries = retainedSummaries }
         if typingHints[group.id]?.acceptsState(sequence: sequence) == true { typingHints[group.id] = nil }
-        stateFetch[group.id, default: PalFetchState()].finish()
-        } catch { if accountGeneration == generation { stateFetch[group.id, default: PalFetchState()].fail(error) }; throw error }
+        updateFetch(.state(group.id)) { $0.finish() }
+        } catch { if accountGeneration == generation { updateFetch(.state(group.id)) { $0.fail(error) } }; throw error }
     }
 
     func mutate(_ group: ChatGroup, action: String, data: [String: JSONValue]) async throws {
         let response = try await api("/api/groups/\(group.id)/state", method: "POST", json: ["action": .string(action), "data": .object(data)])
         if action == "group.read" {
-            if let index = groups.firstIndex(where: { $0.id == group.id }) { groups[index].unreadCount = 0 }
+            if let index = groups.firstIndex(where: { $0.id == group.id }), groups[index].unreadCount != 0 { groups[index].unreadCount = 0 }
             if case .string(let value)? = data["message_id"], let messageID = UUID(uuidString: value),
                let receipt = try? JSONDecoder().decode(PalReadReceipt.self, from: response),
                var state = states[group.id], let member = state.members.firstIndex(where: { $0.userID == userID }) {
                 let createdAt = cachedMessages[group.id]?.first { $0.id == messageID }?.createdAt
                 receipt.apply(to: &state.members[member], messageID: messageID, targetCreatedAt: createdAt)
-                states[group.id] = state
+                if states[group.id] != state { states[group.id] = state }
             }
             return
         }
@@ -346,12 +366,13 @@ final class PalStore: ObservableObject {
 
     func loadProfile() async throws {
         let generation = accountGeneration
-        profileFetch.begin()
+        updateFetch(.profile) { $0.begin() }
         do {
             struct Response: Decodable { let profile: PalProfile }
-            profile = try JSONDecoder().decode(Response.self, from: await api("/api/profile")).profile
-            profileFetch.finish()
-        } catch { if accountGeneration == generation { profileFetch.fail(error) }; throw error }
+            let loaded = try JSONDecoder().decode(Response.self, from: await api("/api/profile")).profile
+            if profile != loaded { profile = loaded }
+            updateFetch(.profile) { $0.finish() }
+        } catch { if accountGeneration == generation { updateFetch(.profile) { $0.fail(error) } }; throw error }
     }
 
     func saveProfile(name: String, avatarURL: String?, notifications: Bool) async throws {
@@ -507,6 +528,7 @@ final class PalStore: ObservableObject {
     private func clearReadCache() {
         accountGeneration = UUID()
         reads.clear()
+        fetchActivity.removeAll()
         refreshTask?.cancel(); refreshTask = nil; refreshTaskID = nil
         warmupID = nil; warmupTask?.cancel(); warmupTask = nil
         groups = []; states = [:]; memberSummaries = [:]; messageCache.clear(); cachedMessages = [:]; typingHints = [:]
@@ -615,12 +637,13 @@ final class PalStore: ObservableObject {
 
     private func acknowledge(_ message: ChatMessage) {
         messageCache.acknowledge(message)
-        cachedMessages = messageCache.messages
+        if cachedMessages != messageCache.messages { cachedMessages = messageCache.messages }
         if message.role == "user", typingHints[message.groupID]?.clientID == message.clientID {
             typingHints[message.groupID]?.posted(after: stateRequests[message.groupID] ?? 0)
         }
         if let index = groups.firstIndex(where: { $0.id == message.groupID }) {
-            groups[index].lastMessage = GroupLastMessage(id: message.id, body: message.body, createdAt: message.createdAt, role: message.role)
+            let latest = GroupLastMessage(id: message.id, body: message.body, createdAt: message.createdAt, role: message.role)
+            if groups[index].lastMessage != latest { groups[index].lastMessage = latest }
         }
     }
 

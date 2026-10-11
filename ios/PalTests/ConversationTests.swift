@@ -103,4 +103,56 @@ final class ConversationTests: XCTestCase {
         XCTAssertEqual(RSVPButtons.prompt(for: "declined"), "You can’t go")
     }
 
+    private func transcriptMessage(group: UUID, sender: UUID, id: UUID = UUID(), client: UUID? = nil, at: String, role: String = "user") throws -> ChatMessage {
+        var json: [String: Any] = ["id": id.uuidString, "group_id": group.uuidString, "sender_id": sender.uuidString, "role": role, "body": "Hello", "created_at": at]
+        if let client { json["client_id"] = client.uuidString }
+        return try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+
+    func testTranscriptKeepsOptimisticIdentityWhenAcknowledged() throws {
+        let group = UUID(), sender = UUID(), client = UUID()
+        let pending = OutgoingMessage(groupID: group, userID: sender, clientID: client, body: "Hello", failed: false, createdAt: "2026-10-11T20:00:00Z")
+        let before = ChatTranscriptRow.prepare(messages: [], pending: [pending])
+        let sent = try transcriptMessage(group: group, sender: sender, client: client, at: "2026-10-11T20:00:00Z")
+        let after = ChatTranscriptRow.prepare(messages: [sent], pending: [pending])
+        XCTAssertEqual(before.map(\.id), [client])
+        XCTAssertEqual(after.map(\.id), [client], "An acknowledged outbox item occupies the same single row.")
+        XCTAssertEqual(after.first?.item.message?.id, sent.id)
+    }
+
+    func testTranscriptSeparatorsAndSenderRunsUsePreparedDates() throws {
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let group = UUID(), sender = UUID()
+        let values = try ["2026-10-11T20:00:00Z", "2026-10-11T20:02:00Z", "2026-10-11T20:06:00Z", "2026-10-12T00:00:00Z"].map { try transcriptMessage(group: group, sender: sender, at: $0) }
+        let rows = ChatTranscriptRow.prepare(messages: Array(values.reversed()), pending: [], calendar: calendar)
+        XCTAssertEqual(rows.map(\.id), values.map(\.timelineID))
+        XCTAssertEqual(rows.map(\.startsDay), [true, false, false, true])
+        XCTAssertEqual(rows.map(\.showSender), [true, false, true, true])
+        XCTAssertTrue(rows.allSatisfy { $0.date != nil })
+    }
+
+    func testTranscriptRetainsLegacyOutboxWithoutCreatingAnInvalidDateSeparator() throws {
+        let group = UUID(), sender = UUID()
+        let sent = try transcriptMessage(group: group, sender: sender, at: "2026-10-11T20:00:00Z")
+        let pending = OutgoingMessage(groupID: group, userID: sender, clientID: UUID(), body: "Retry", failed: true)
+        let rows = ChatTranscriptRow.prepare(messages: [sent], pending: [pending])
+        XCTAssertEqual(rows.last?.id, pending.id)
+        XCTAssertNil(rows.last?.date)
+        XCTAssertFalse(rows.last?.startsDay ?? true)
+    }
+
+    func testTranscriptCacheInvalidatesSameIDEditsAndRetryState() throws {
+        let group = UUID(), sender = UUID(), id = UUID()
+        let first = try transcriptMessage(group: group, sender: sender, id: id, at: "2026-10-11T20:00:00Z")
+        let edited = try transcriptMessage(group: group, sender: sender, id: id, at: "2026-10-11T20:00:01Z")
+        let source = ChatTranscriptSource(messages: [first], pending: [])
+        XCTAssertEqual(source, ChatTranscriptSource(messages: [first], pending: []))
+        XCTAssertNotEqual(source, ChatTranscriptSource(messages: [edited], pending: []), "Equal IDs do not hide an authoritative message update.")
+        var pending = OutgoingMessage(groupID: group, userID: sender, clientID: UUID(), body: "Retry", failed: false)
+        let before = ChatTranscriptSource(messages: [first], pending: [pending])
+        pending.failed = true
+        XCTAssertNotEqual(before, ChatTranscriptSource(messages: [first], pending: [pending]))
+        XCTAssertNotEqual(source, ChatTranscriptSource(messages: [], pending: []), "Logout and authoritative cleared history drop cached transcript rows.")
+    }
+
 }

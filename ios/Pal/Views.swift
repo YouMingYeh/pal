@@ -260,6 +260,42 @@ private struct ChatBottomOffset: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
+struct ChatTranscriptSource: Equatable {
+    let messages: [ChatMessage]
+    let pending: [OutgoingMessage]
+    var calendar: Calendar = .current
+}
+
+/// Prepare dates once and keep one stable lazy-stack child per message.
+struct ChatTranscriptRow: Identifiable {
+    let item: ChatTimelineItem
+    let date: Date?
+    let startsDay: Bool
+    let showSender: Bool
+    var id: UUID { item.id }
+
+    static func prepare(messages: [ChatMessage], pending: [OutgoingMessage], calendar: Calendar = .current) -> [Self] {
+        let acknowledged = Set(messages.compactMap(\.clientID))
+        let items = messages.map(ChatTimelineItem.message) + pending.filter { !acknowledged.contains($0.clientID) }.map(ChatTimelineItem.outgoing)
+        let dated = items.map { (item: $0, date: PalDate.date($0.createdAt)) }
+        let ordered = dated.sorted { left, right in
+            let leftDate = left.date ?? .distantFuture, rightDate = right.date ?? .distantFuture
+            return leftDate == rightDate ? left.item.id.uuidString < right.item.id.uuidString : leftDate < rightDate
+        }
+        return ordered.enumerated().map { index, value in
+            let previous = index > 0 ? ordered[index - 1] : nil
+            let sameDay = value.date.flatMap { date in previous?.date.map { calendar.isDate(date, inSameDayAs: $0) } } ?? false
+            var showSender = true
+            if sameDay, let message = value.item.message, let prior = previous?.item.message,
+               message.role != "system", message.role == prior.role, message.senderID == prior.senderID,
+               let date = value.date, let priorDate = previous?.date {
+                showSender = !(0...180).contains(date.timeIntervalSince(priorDate))
+            }
+            return Self(item: value.item, date: value.date, startsDay: value.date != nil && !sameDay, showSender: showSender)
+        }
+    }
+}
+
 struct ChatView: View {
     let group: ChatGroup
     @EnvironmentObject private var store: PalStore
@@ -284,28 +320,35 @@ struct ChatView: View {
     @State private var lastRead: UUID?
     @State private var typingExpired = false
     @State private var atBottom = true
+    @State private var transcriptCache: (source: ChatTranscriptSource, rows: [ChatTranscriptRow])?
     private var state: GroupState { store.states[group.id] ?? .empty }
-    private var pending: [OutgoingMessage] { store.outgoing.filter { item in item.groupID == group.id && item.userID == store.userID && !messages.contains(where: { $0.clientID == item.clientID }) } }
+    private var pending: [OutgoingMessage] { store.outgoing.filter { $0.groupID == group.id && $0.userID == store.userID } }
     var body: some View {
-        GeometryReader { viewport in
+        let source = ChatTranscriptSource(messages: messages, pending: pending)
+        let rows = transcriptCache.flatMap { $0.source == source ? $0.rows : nil } ?? ChatTranscriptRow.prepare(messages: source.messages, pending: source.pending, calendar: source.calendar)
+        let last = rows.last?.item
+        let reactions = Dictionary(grouping: state.reactions, by: \.messageID)
+        return GeometryReader { viewport in
         ScrollViewReader { proxy in
             ScrollView {
-                transcript
+                transcript(rows, reactions: reactions)
             }.coordinateSpace(name: "chatScroll").onPreferenceChange(ChatBottomOffset.self) { bottom in
                 let reachedBottom = bottom <= viewport.size.height + 60
                 if atBottom != reachedBottom { atBottom = reachedBottom }
             }.defaultScrollAnchor(.bottom).scrollDismissesKeyboard(.interactively).modifier(ChatScrollEdges()).refreshable { await refresh() }
-                                .onChange(of: timeline.last?.id) { _, id in
-                    if let id, atBottom || timeline.last?.message?.senderID == store.userID || pending.last?.id == id { proxy.scrollTo(id, anchor: .bottom) }
+                .onChange(of: last?.id) { _, id in
+                    if let id, atBottom || last?.message?.senderID == store.userID || pending.last?.id == id { proxy.scrollTo(id, anchor: .bottom) }
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) { composer }
                 .onChange(of: scrollToReply) { _, id in
                     if let id { withAnimation { proxy.scrollTo(id, anchor: .center) }; scrollToReply = nil }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    if !atBottom { Button { if let id = timeline.last?.id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } } } label: { Image(systemName: "arrow.down").frame(width: 44, height: 44).modifier(PalGlass(cornerRadius: 22)) }.buttonStyle(.plain).accessibilityLabel("Latest messages").padding(.trailing, 16).padding(.bottom, 120) }
+                    if !atBottom { Button { if let id = last?.id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } } } label: { Image(systemName: "arrow.down").frame(width: 44, height: 44).modifier(PalGlass(cornerRadius: 22)) }.buttonStyle(.plain).accessibilityLabel("Latest messages").padding(.trailing, 16).padding(.bottom, 120) }
                 }
         }
+        }.onChange(of: source, initial: true) { _, updated in
+            transcriptCache = (updated, ChatTranscriptRow.prepare(messages: updated.messages, pending: updated.pending, calendar: updated.calendar))
         }.navigationTitle(group.isDirect ? "Pal" : group.name).navigationBarTitleDisplayMode(.inline)
             .modifier(ChatNavigationSurface())
             .toolbar {
@@ -343,34 +386,23 @@ struct ChatView: View {
                 while !Task.isCancelled { await refresh(); do { try await Task.sleep(for: .seconds(2)) } catch { break } }
             }
     }
-    private var timeline: [ChatTimelineItem] {
-        var items = messages.map { ChatTimelineItem.message($0) }
-        items.append(contentsOf: pending.map { ChatTimelineItem.outgoing($0) })
-        let dated = items.map { item -> (item: ChatTimelineItem, date: Date) in
-            (item, PalDate.date(item.createdAt) ?? .distantFuture)
-        }
-        let ordered = dated.sorted { left, right in
-            if left.date == right.date { return left.item.id.uuidString < right.item.id.uuidString }
-            return left.date < right.date
-        }
-        return ordered.map { $0.item }
-    }
-    private var transcript: some View {
-        let items = timeline
+    private func transcript(_ rows: [ChatTranscriptRow], reactions: [UUID: [MessageReaction]]) -> some View {
+        let items = rows
         return LazyVStack(spacing: 9) {
             if items.isEmpty, store.cachedMessages[group.id] == nil {
                 if pollingError == nil { ProgressView("Loading messages…").padding(.vertical, 36) }
                 else { Button("Try again") { Task { await refresh() } }.padding(.vertical, 36) }
             }
             if items.isEmpty, store.cachedMessages[group.id] != nil { VStack(spacing: 12) { PalMascotAvatar(size: 54).accessibilityHidden(true); Text("No messages yet").font(.subheadline).foregroundStyle(.secondary) }.padding(.horizontal, 28).padding(.top, 36) }
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                let previous = index > 0 ? items[index - 1] : nil
-                if PalDate.date(item.createdAt) != nil, (previous?.createdAt).flatMap(day) != day(item.createdAt) {
-                    Text(PalDate.date(item.createdAt)?.formatted(date: .abbreviated, time: .shortened) ?? "").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.vertical, 10)
-                }
-                switch item {
-                case .message(let message): messageRow(message, showSender: previous?.message.map { !message.follows($0) } ?? true)
-                case .outgoing(let outgoing): pendingRow(outgoing)
+            ForEach(items) { row in
+                VStack(spacing: 9) {
+                    if row.startsDay, let date = row.date {
+                        Text(date.formatted(date: .abbreviated, time: .shortened)).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.vertical, 10)
+                    }
+                    switch row.item {
+                    case .message(let message): messageRow(message, showSender: row.showSender, reactions: reactions[message.id] ?? [])
+                    case .outgoing(let outgoing): pendingRow(outgoing)
+                    }
                 }
             }
             Color.clear.frame(height: 1).background(GeometryReader { geometry in Color.clear.preference(key: ChatBottomOffset.self, value: geometry.frame(in: .named("chatScroll")).maxY) })
@@ -470,9 +502,8 @@ struct ChatView: View {
         if let attachment { try? AttachmentFiles.remove(attachment) }
         attachment = nil
     }
-    private func day(_ value: String) -> Date? { PalDate.date(value).map { Calendar.current.startOfDay(for: $0) } }
     private func memberName(_ message: ChatMessage) -> String { message.role == "pal" ? "Pal" : (state.members.first { $0.userID == message.senderID }?.displayName ?? (message.senderID == store.userID ? "You" : "Member")) }
-    @ViewBuilder private func messageRow(_ message: ChatMessage, showSender: Bool) -> some View {
+    @ViewBuilder private func messageRow(_ message: ChatMessage, showSender: Bool, reactions: [MessageReaction]) -> some View {
         let mine = message.senderID == store.userID && message.role == "user"
         if message.role == "system" {
             if let body = message.plainBody(in: state) { Text(body).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.horizontal, 18).padding(.vertical, 6) }
@@ -498,7 +529,6 @@ struct ChatView: View {
                 }
                 ForEach(message.cards.filter { ["plan", "rsvp", "options", "choice", "availability"].contains($0.type) }) { card in PalCardView(group: group, card: card) }
                 ForEach(message.attachments) { media in MessageAttachmentView(attachment: media, onRetry: { Task { await refresh() } }).contextMenu { messageMenu(message, mine: mine) } }
-                let reactions = state.reactions.filter { $0.messageID == message.id }
                 if !reactions.isEmpty { HStack(spacing: 4) { ForEach(Array(Set(reactions.map(\.emoji))).sorted(), id: \.self) { emoji in let count = reactions.filter { $0.emoji == emoji }.count; let selected = reactions.contains { $0.emoji == emoji && $0.userID == store.userID }; Button { react(emoji, to: message) } label: { Text("\(emoji) \(count)").font(.caption).padding(.horizontal, 9).padding(.vertical, 5).background(selected ? PalTheme.ink.opacity(0.12) : Color(uiColor: .tertiarySystemFill), in: Capsule()) }.buttonStyle(.plain).frame(minHeight: 44).accessibilityLabel("\(emoji), \(count) reactions").accessibilityValue(selected ? "You reacted" : "").accessibilityHint(selected ? "Remove your reaction" : "Add your reaction") } } }
             }
             if !mine { Spacer(minLength: 28) }

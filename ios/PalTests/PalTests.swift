@@ -8,6 +8,14 @@ import AVFoundation
 @testable import Pal
 
 final class PalTests: XCTestCase {
+    func testSharedDateParserPreservesFractionalMillisecondsAndTimezoneOffsets() throws {
+        let utc = try XCTUnwrap(PalDate.date("2026-10-11T20:00:00Z"))
+        XCTAssertEqual(PalDate.date("2026-10-11T13:00:00-07:00"), utc)
+        let fractional = try XCTUnwrap(PalDate.date("2026-10-11T20:00:00.123+00:00"))
+        XCTAssertEqual(fractional.timeIntervalSince(utc), 0.123, accuracy: 0.000001)
+        XCTAssertEqual(PalDate.iso(utc), "2026-10-11T20:00:00Z")
+        XCTAssertNil(PalDate.date("Not a date"))
+    }
     func testPrivatePalRoomAndLegacyGroupsDecodeWithoutAnInvite() throws {
         let privateRoom = try JSONDecoder().decode(ChatGroup.self, from: Data("{\"id\":\"\(UUID())\",\"name\":\"Pal\",\"is_direct\":true,\"invite_code\":null}".utf8))
         XCTAssertTrue(privateRoom.isDirect)

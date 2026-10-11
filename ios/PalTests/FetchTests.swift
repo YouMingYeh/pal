@@ -39,6 +39,74 @@ final class FetchTests: XCTestCase {
         XCTAssertGreaterThan(pixel[0], 200)
         XCTAssertLessThan(pixel[2], 80, "The actual mounted center must draw the orange photo, rather than the empty white placeholder.")
     }
+    func testBackgroundFetchesDoNotChangeVisibleStateButKeepConcurrentRequestAccounting() {
+        var tracked = PalFetchState()
+        tracked.begin()
+        let loading = tracked.presentation
+        tracked.begin()
+        XCTAssertEqual(tracked.presentation, loading, "Overlapping cold readers share one visible loading state.")
+        XCTAssertTrue(tracked.presentation.isLoading)
+        tracked.finish()
+        let confirmed = tracked.presentation
+        XCTAssertTrue(tracked.isLoading, "Another reader still owns an outstanding request.")
+        XCTAssertTrue(confirmed.hasLoaded)
+        XCTAssertFalse(confirmed.isLoading, "Confirmed content need not be invalidated just to spin a hidden refresh.")
+        tracked.begin(); tracked.finish()
+        XCTAssertEqual(tracked.presentation, confirmed)
+        tracked.fail(PalFailure(message: "Offline"))
+        XCTAssertEqual(tracked.presentation.issue, "Offline")
+        tracked.begin()
+        XCTAssertEqual(tracked.presentation, confirmed, "Retry clears the inline error without clearing the content.")
+        tracked.finish()
+        XCTAssertFalse(tracked.isLoading)
+        XCTAssertEqual(tracked.presentation, confirmed)
+    }
+
+    func testSnapshotEqualityIncludesReadMarkersReactionsCardResponsesAndTypingLeases() {
+        let member = UUID()
+        var initial = GroupState.empty
+        initial.members = [GroupMember(userID: member, displayName: "Amy", avatarURL: "https://example.com/photo?token=old")]
+        initial.plans = [GroupPlan(id: UUID(), title: "Dinner", status: "confirmed", attendees: [])]
+        initial.polls = [GroupPoll(id: UUID(), kind: "time", question: "When?", options: [], status: "open", votes: [])]
+        var updated = initial
+        XCTAssertEqual(initial, updated)
+        updated.members[0].avatarURL = "https://example.com/photo?token=new"
+        XCTAssertNotEqual(initial, updated, "Fresh signed URLs must still reach photo views.")
+        updated = initial; updated.members[0].lastReadAt = "2026-10-11T20:00:00Z"
+        XCTAssertNotEqual(initial, updated)
+        updated = initial; updated.plans[0].attendees = [PlanAttendee(userID: member, status: "going")]
+        XCTAssertNotEqual(initial, updated)
+        updated = initial; updated.polls[0].responses = [PollResponse(userID: member, optionIDs: [])]
+        XCTAssertNotEqual(initial, updated, "Explicit none must differ from unknown availability.")
+        updated = initial; updated.reactions = [MessageReaction(messageID: UUID(), userID: member, emoji: "❤️")]
+        XCTAssertNotEqual(initial, updated)
+        updated = initial; updated.palActivity = PalWorkActivity(activity: "thinking", jobID: UUID(), status: "accepted", expiresAt: "2026-10-11T20:01:00Z")
+        XCTAssertNotEqual(initial, updated)
+    }
+
+    func testMessageEqualityIncludesReplyEmotionMentionsAndAttachmentURLChanges() throws {
+        let member = UUID(), source = UUID()
+        var json: [String: Any] = ["id": UUID().uuidString, "group_id": UUID().uuidString, "role": "pal", "body": "Friday works.", "created_at": "2026-10-11T20:00:00Z"]
+        func decode() throws -> ChatMessage { try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: json)) }
+        let plain = try decode()
+        XCTAssertEqual(plain, try decode())
+        json["emotion"] = "heureux"
+        XCTAssertNotEqual(plain, try decode())
+        json.removeValue(forKey: "emotion")
+        json["mentions"] = [["type": "user", "user_id": member.uuidString]]
+        XCTAssertNotEqual(plain, try decode())
+        json.removeValue(forKey: "mentions")
+        json["reply"] = ["id": source.uuidString, "sender_id": member.uuidString, "role": "user", "body": "Friday?"]
+        XCTAssertNotEqual(plain, try decode())
+        json.removeValue(forKey: "reply")
+        json["attachments"] = [["id": UUID().uuidString, "kind": "image", "url": "https://example.com/photo?token=old", "mime_type": "image/jpeg", "byte_size": 100]]
+        let original = try decode()
+        var attachments = try XCTUnwrap(json["attachments"] as? [[String: Any]])
+        attachments[0]["url"] = "https://example.com/photo?token=new"
+        json["attachments"] = attachments
+        XCTAssertNotEqual(original, try decode())
+    }
+
     func testConfirmedReadReceiptUsesServerTimeAndDoesNotRegressOnAnOlderTarget() throws {
         let userID = UUID(), oldID = UUID(), latestID = UUID()
         var member = GroupMember(userID: userID, displayName: "Reader", lastReadAt: "2026-10-11T12:00:00Z", lastReadMessageID: oldID)
