@@ -337,13 +337,13 @@ struct AudioRecorderView: View {
                     .accessibilityLabel("Recorded \(Int(recorder.elapsed)) seconds")
                 Text("Voice messages can be recorded for up to 59 seconds.").font(.footnote).foregroundStyle(.secondary)
                 if recorder.recording {
-                    Button("Stop recording", systemImage: "stop.circle.fill") { recorder.stop() }.buttonStyle(.borderedProminent)
+                    Button("Stop recording", systemImage: "stop.circle.fill") { recorder.stop() }.buttonStyle(.borderedProminent).tint(PalTheme.accent).foregroundStyle(PalTheme.onAccent)
                 } else if let file = recorder.readyURL {
                     AudioPlaybackView(url: file, durationMS: Int(recorder.elapsed * 1000)).id(file)
-                    Button("Use recording", systemImage: "checkmark") { useRecording(file) }.buttonStyle(.borderedProminent)
+                    Button("Use recording", systemImage: "checkmark") { useRecording(file) }.buttonStyle(.borderedProminent).tint(PalTheme.accent).foregroundStyle(PalTheme.onAccent)
                     Button("Record again", systemImage: "mic") { Task { await recorder.start() } }
                 } else {
-                    Button("Record", systemImage: "mic.circle.fill") { Task { await recorder.start() } }.buttonStyle(.borderedProminent)
+                    Button("Record", systemImage: "mic.circle.fill") { Task { await recorder.start() } }.buttonStyle(.borderedProminent).tint(PalTheme.accent).foregroundStyle(PalTheme.onAccent)
                 }
                 if recorder.requesting || preparing { ProgressView(recorder.requesting ? "Checking microphone permission…" : "Preparing recording…") }
                 if let issue = recorder.issue { Text(issue).font(.footnote).foregroundStyle(.red) }

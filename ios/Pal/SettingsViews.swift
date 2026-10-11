@@ -39,6 +39,8 @@ struct ProfileView: View {
     @State private var name = ""
     @State private var originalName = ""
     @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showingPhotoLibrary = false
+    @State private var showingCamera = false
     @State private var avatarData: Data?
     @State private var avatarPreview: UIImage?
     @State private var removeAvatar = false
@@ -64,7 +66,13 @@ struct ProfileView: View {
             Section {
                 HStack {
                     Spacer()
-                    PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                    Menu {
+                        Button("Camera", systemImage: "camera") { selectedPhoto = nil; showingCamera = true }
+                        Button("Photo Library", systemImage: "photo.on.rectangle") { selectedPhoto = nil; showingPhotoLibrary = true }
+                        if currentAvatarURL != nil || avatarData != nil || processingPhoto {
+                            Button("Remove Photo", systemImage: "trash", role: .destructive, action: removePhoto)
+                        }
+                    } label: {
                         ZStack(alignment: .bottomTrailing) {
                             if let avatarPreview {
                                 Image(uiImage: avatarPreview).resizable().scaledToFill()
@@ -72,17 +80,16 @@ struct ProfileView: View {
                             } else {
                                 AvatarView(name: name, url: currentAvatarURL, size: 148)
                             }
-                            Image(systemName: "photo.badge.plus").font(.title3)
-                                .frame(width: 42, height: 42).background(.regularMaterial, in: Circle())
+                            Image(systemName: "camera.fill").font(.system(size: 15, weight: .semibold))
+                                .frame(width: 32, height: 32).background(.regularMaterial, in: Circle())
+                                .overlay(Circle().stroke(.white.opacity(0.45), lineWidth: 1))
+                                .accessibilityHidden(true)
                         }
-                    }.buttonStyle(.plain).accessibilityLabel("Choose profile photo")
+                    }.buttonStyle(.plain).accessibilityLabel("Edit profile photo")
                     Spacer()
                 }
                 .padding(.vertical, 24)
                 if processingPhoto { ProgressView("Preparing photo…").frame(maxWidth: .infinity) }
-                if currentAvatarURL != nil || avatarData != nil || processingPhoto {
-                    Button("Remove photo", role: .destructive) { removePhoto() }.frame(maxWidth: .infinity)
-                }
             }.listRowBackground(Color.clear)
             Section {
                 HStack {
@@ -97,13 +104,13 @@ struct ProfileView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                         if let url = URL(string: UIApplication.openNotificationSettingsURLString) { Link("Open notification settings", destination: url) }
                     } else if authorization == .notDetermined {
-                        Button("Enable notifications") { updateNotifications(true) }.disabled(store.profile == nil)
+                        Button("Enable notifications") { updateNotifications(true) }.tint(PalTheme.accentText).disabled(store.profile == nil)
                         Text("Receive chat alerts and reminders from Pal.").font(.footnote).foregroundStyle(.secondary)
                     } else {
                         Toggle("Chat alerts and reminders", isOn: Binding(
                             get: { PalNotificationPreference.isEnabled(store.profile?.notificationPreferences?.enabled ?? false, authorization: authorization) },
                             set: { updateNotifications($0) }
-                        )).disabled(store.profile == nil)
+                        )).tint(PalTheme.accent).disabled(store.profile == nil)
                     }
                 } else { ProgressView("Checking notification permission…") }
                 if store.pushRegistrationIssue != nil {
@@ -129,7 +136,7 @@ struct ProfileView: View {
                     Text("Disconnect stops updates. Existing Google events stay in your Pal calendar.")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else if calendarStatus?.connected == false {
-                    Button("Connect Google Calendar") { connectCalendar() }
+                    Button("Connect Google Calendar") { connectCalendar() }.tint(PalTheme.accentText)
                 }
             }
             Section {
@@ -141,27 +148,33 @@ struct ProfileView: View {
         .navigationTitle("Edit Profile").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { if hasChanges { discarding = true } else { dismiss() } }.disabled(busy)
+                Button("Cancel") { if hasChanges || processingPhoto { discarding = true } else { clearCommittedDraft(); dismiss() } }.disabled(busy)
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save profile", systemImage: "checkmark") { save() }.labelStyle(.iconOnly)
                     .disabled(busy || loadingProfile || processingPhoto || !validName || !hasChanges)
             }
         }
-        .interactiveDismissDisabled(busy || hasChanges)
+        .interactiveDismissDisabled(busy || hasChanges || processingPhoto)
+        .photosPicker(isPresented: $showingPhotoLibrary, selection: $selectedPhoto, matching: .images)
+        .fullScreenCover(isPresented: $showingCamera) {
+            CameraCapture(onCapture: prepareCameraPhoto, onError: { error = $0.localizedDescription })
+        }
         .task {
-            do {
-                try await store.loadProfile()
-                name = store.profile?.displayName ?? ""
-                originalName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
-            loadingProfile = false
+            if loadingProfile {
+                do {
+                    try await store.loadProfile()
+                    name = store.profile?.displayName ?? ""
+                    originalName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
+                loadingProfile = false
+            }
             await refreshNotificationAuthorization()
             await refreshCalendar()
         }
         .task(id: selectedPhoto) {
             guard !Task.isCancelled else { return }
-            guard let item = selectedPhoto else { processingPhoto = false; return }
+            guard let item = selectedPhoto else { return }
             let taskID = UUID()
             photoTaskID = taskID
             processingPhoto = true
@@ -220,6 +233,27 @@ struct ProfileView: View {
                 clearCommittedDraft()
                 dismiss()
             } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
+        }
+    }
+
+    private func prepareCameraPhoto(_ data: Data) {
+        guard !busy else { return }
+        let taskID = UUID()
+        photoTaskID = taskID
+        selectedPhoto = nil
+        processingPhoto = true
+        Task {
+            defer { if photoTaskID == taskID { processingPhoto = false } }
+            do {
+                let prepared = try await Task.detached(priority: .userInitiated) { try PalAvatarImage.jpegData(from: data) }.value
+                try Task.checkCancellation()
+                guard photoTaskID == taskID else { return }
+                avatarData = prepared
+                avatarPreview = UIImage(data: prepared)
+                removeAvatar = false
+            } catch {
+                if !PalCancellation.isCancellation(error) && photoTaskID == taskID { self.error = error.localizedDescription }
+            }
         }
     }
 

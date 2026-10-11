@@ -8,6 +8,58 @@ import AVFoundation
 @testable import Pal
 
 final class PalTests: XCTestCase {
+    func testMascotExpressionsHaveBundledTransparentArtworkAndSafeFallback() throws {
+        XCTAssertEqual(PalMascotEmotion.normalized(nil), "fier")
+        XCTAssertEqual(PalMascotEmotion.normalized("unknown"), "fier")
+        XCTAssertEqual(PalMascotEmotion.all.count, 12)
+        for emotion in PalMascotEmotion.all {
+            XCTAssertEqual(PalMascotEmotion.normalized(emotion), emotion)
+            let image = try XCTUnwrap(UIImage(named: "PalMascot-" + emotion))
+            XCTAssertNotNil(image.cgImage)
+            XCTAssertTrue([CGImageAlphaInfo.premultipliedFirst, .premultipliedLast, .first, .last].contains(try XCTUnwrap(image.cgImage).alphaInfo))
+        }
+        XCTAssertNotNil(Bundle.main.url(forResource: "Cloud", withExtension: "html", subdirectory: "Mascot"))
+        XCTAssertNotNil(Bundle.main.url(forResource: "Bloub-LICENSE", withExtension: "txt", subdirectory: "Mascot"))
+    }
+
+    func testPalThinkingRequiresAnUnexpiredRealChatJob() throws {
+        let now = PalDate.date("2026-10-11T20:00:00Z")!
+        var activity = PalWorkActivity(activity: "thinking", jobID: UUID(), status: "accepted", expiresAt: "2026-10-11T20:01:00Z")
+        XCTAssertTrue(activity.isThinking(at: now))
+        activity.status = "running"
+        XCTAssertTrue(activity.isThinking(at: now))
+        XCTAssertFalse(activity.isThinking(at: PalDate.date("2026-10-11T20:01:00Z")!))
+        activity.status = "completed"
+        XCTAssertFalse(activity.isThinking(at: now))
+        activity.status = "running"; activity.jobID = nil
+        XCTAssertFalse(activity.isThinking(at: now))
+        activity.jobID = UUID(); activity.expiresAt = "invalid"
+        XCTAssertFalse(activity.isThinking(at: now))
+        activity.expiresAt = nil
+        XCTAssertFalse(activity.isThinking(at: now))
+        let decoded = try JSONDecoder().decode(PalWorkActivity.self, from: Data("{\"activity\":\"idle\",\"job_id\":null,\"status\":null,\"expires_at\":null}".utf8))
+        XCTAssertFalse(decoded.isThinking(at: now))
+    }
+
+    func testFreshPalReplyAnimatesOnlyOnceAndNeverReplaysHistory() throws {
+        func message(_ role: String, emotion: String? = nil) throws -> ChatMessage {
+            let json: [String: Any] = ["id": UUID().uuidString, "group_id": UUID().uuidString, "role": role, "body": "A real reply", "created_at": "2026-10-11T20:00:00Z", "emotion": emotion as Any? ?? NSNull()]
+            return try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: json))
+        }
+        let old = try message("pal"), human = try message("user"), fresh = try message("pal", emotion: "heureux")
+        XCTAssertNil(old.emotion)
+        XCTAssertEqual(fresh.emotion, "heureux")
+        var lifecycle = PalReplyAnimationState()
+        XCTAssertNil(lifecycle.receive([old]))
+        XCTAssertNil(lifecycle.receive([old, human]))
+        XCTAssertEqual(lifecycle.receive([old, human, fresh]), fresh.id)
+        XCTAssertNil(lifecycle.receive([old, human, fresh]))
+        lifecycle.resume()
+        let whileAway = try message("pal", emotion: "curieux")
+        XCTAssertNil(lifecycle.receive([old, human, fresh, whileAway]))
+        XCTAssertNil(lifecycle.receive([old, human, fresh, whileAway]))
+    }
+
     @MainActor func testAutomaticPushFailureStaysInlineAndDoesNotInterruptNavigation() {
         let store = PalStore()
         store.recordPushRegistrationError("Temporary registration failure")
@@ -463,7 +515,8 @@ final class PalTests: XCTestCase {
         try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store), name: "Live v1 profile and Google Calendar", wait: 6)
         try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store).preferredColorScheme(.dark), name: "Live v1 profile dark", wait: 6)
         if let plan = state.plans.first(where: { $0.status != "cancelled" }) { try await attachScreenshot(of: NavigationStack { PlanDetailView(group: group, plan: plan) }.environmentObject(store), name: "Live v1 plan details") }
-        let cards = messages.flatMap(\.cards)
+        var seenCards: Set<String> = []
+        let cards = messages.flatMap(\.cards).filter { seenCards.insert($0.id).inserted }
         try await attachScreenshot(of: NavigationStack {
             ScrollView { VStack(alignment: .leading, spacing: 16) { ForEach(cards) { PalCardView(group: group, card: $0) } }.padding() }
                 .background(Color(uiColor: .systemBackground)).navigationTitle("Group decisions")

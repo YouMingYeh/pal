@@ -85,7 +85,7 @@ const recovery = await db.from("agent_jobs").select("id").eq("message_id", recov
 assert.ifError(recovery.error);
 assert.ok(recovery.data?.id, "Direct Supabase send created a durable job without a backend dispatch.");
 
-await Promise.all(users.map(user => user.client.auth.signOut()));
+await Promise.all(users.map(user => user.client.auth.signOut({ scope: "local" })));
 console.log("All test clients signed out. Waiting for server Cron delivery with no connected client.");
 await sleep(Math.max(1000, Date.parse(due) + 70000 - Date.now()));
 const delivered = await db.from("reminders").select("status").eq("group_id", group.id).single();

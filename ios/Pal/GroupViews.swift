@@ -22,7 +22,7 @@ struct GroupMapView: View {
                         .frame(width: 100, height: 100).foregroundStyle(.secondary).accessibilityHidden(true)
                     Text("Your shared places").font(.title3.weight(.semibold))
                     Text("Save a place from chat, or find one here.").foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("Find a place") { searching = true }.buttonStyle(.borderedProminent)
+                    Button("Find a place") { searching = true }.buttonStyle(.borderedProminent).tint(PalTheme.accent).foregroundStyle(PalTheme.onAccent)
                 }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if mode == 0 {
                 Map {
@@ -171,10 +171,10 @@ struct PlaceDetailView: View {
                     }
                 }
                 if let website = current.website, let url = URL(string: website), ["http", "https"].contains(url.scheme) {
-                    Link("Website", destination: url)
+                    Link("Website", destination: url).tint(PalTheme.accentText)
                 }
                 if let booking = current.bookingURL, let url = URL(string: booking), ["http", "https"].contains(url.scheme) {
-                    Link("Open booking website", destination: url)
+                    Link("Open booking website", destination: url).tint(PalTheme.accentText)
                 }
             }
             if current.status != "resolved" {
@@ -257,10 +257,10 @@ struct GroupCalendarView: View {
                             Button { selected = date } label: {
                                 VStack(spacing: 3) {
                                     Text("\(Calendar.current.component(.day, from: date))").font(.body)
-                                    Circle().fill(hasEvents(date) ? (active ? PalTheme.onInk : PalTheme.ink) : .clear).frame(width: 4, height: 4)
+                                    Circle().fill(hasEvents(date) ? (active ? PalTheme.onAccent : PalTheme.accentText) : .clear).frame(width: 4, height: 4)
                                 }.frame(maxWidth: .infinity).padding(.vertical, 5)
-                                    .foregroundStyle(active ? PalTheme.onInk : PalTheme.ink)
-                                    .background(active ? PalTheme.ink : .clear, in: RoundedRectangle(cornerRadius: 10))
+                                    .foregroundStyle(active ? PalTheme.onAccent : PalTheme.ink)
+                                    .background(active ? PalTheme.accent : .clear, in: RoundedRectangle(cornerRadius: 10))
                             }.buttonStyle(.plain).accessibilityLabel(date.formatted(date: .complete, time: .omitted))
                                 .accessibilityAddTraits(active ? .isSelected : [])
                         } else { Color.clear.frame(height: 38) }
@@ -368,7 +368,7 @@ struct PlanDetailView: View {
                             HStack {
                                 Text(status == "declined" ? "Can’t go" : status.capitalized)
                                 Spacer()
-                                if current.attendees.contains(where: { $0.userID == store.userID && $0.status == status }) { Image(systemName: "checkmark") }
+                                if current.attendees.contains(where: { $0.userID == store.userID && $0.status == status }) { Image(systemName: "checkmark").foregroundStyle(PalTheme.accentText) }
                             }
                         }.disabled(busy)
                     }
@@ -378,9 +378,9 @@ struct PlanDetailView: View {
                     Section("Reservation") {
                         if let place = (store.states[group.id] ?? .empty).places.first(where: { $0.id == current.placeID }) {
                             if let link = place.bookingURL, let url = URL(string: link), ["https", "http"].contains(url.scheme) {
-                                Link("Book", destination: url)
+                                Link("Book", destination: url).tint(PalTheme.accentText)
                             } else if let link = place.website, let url = URL(string: link), ["https", "http"].contains(url.scheme) {
-                                Link("Visit website", destination: url)
+                                Link("Visit website", destination: url).tint(PalTheme.accentText)
                             }
                         }
                         Text(current.bookingStatus?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Not booked")
@@ -392,7 +392,7 @@ struct PlanDetailView: View {
                     }
                 }
                 Section {
-                    if current.status != "confirmed" { Button("Confirm plan") { action("plan.confirm") }.disabled(busy) }
+                    if current.status != "confirmed" { Button("Confirm plan") { action("plan.confirm") }.tint(PalTheme.accentText).disabled(busy) }
                     Button("Edit plan") { editing = true }.disabled(busy)
                     Button("Cancel plan", role: .destructive) { cancelling = true }.disabled(busy)
                 }

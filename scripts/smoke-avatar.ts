@@ -95,5 +95,5 @@ try {
   await api(owner, "/api/profile/avatar", "DELETE");
   await api(owner, "/api/profile", "PATCH", { display_name: original.display_name, avatar_url: null });
   if (groupId) checked(await db.from("groups").delete().eq("id", groupId));
-  await Promise.all(identities.map(user => user.client.auth.signOut()));
+  await Promise.all(identities.map(user => user.client.auth.signOut({ scope: "local" })));
 }

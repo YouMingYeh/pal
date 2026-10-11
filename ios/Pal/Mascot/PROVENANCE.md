@@ -1,0 +1,1 @@
+Pal mascot resources supplied in pal-mascot-handoff-v1. Cloud.html adapts the MIT-licensed Bloub renderer by Jérémy Perret. See Bloub-LICENSE.txt. Static images are unmodified SVG renders at 192 pixels; light and dark SVG pairs are byte-identical. Native host supplies lifecycle, speaking motion, and offscreen pause.

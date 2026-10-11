@@ -107,5 +107,5 @@ try {
     if (group?.avatar_path) checked(await db.storage.from("avatars").remove([group.avatar_path]));
     checked(await db.from("groups").delete().eq("id", groupId));
   }
-  await Promise.all(users.map(user => user.client.auth.signOut()));
+  await Promise.all(users.map(user => user.client.auth.signOut({ scope: "local" })));
 }

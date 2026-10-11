@@ -82,7 +82,7 @@ struct PollCardView: View {
                             Spacer()
                             Text("\(votes)").font(.caption)
                         }
-                    }.frame(minHeight: 44)
+                    }.frame(minHeight: 44).foregroundStyle(selected ? PalTheme.accentText : PalTheme.ink)
                         .accessibilityLabel(Text("\(option.label), \(votes) votes"))
                         .accessibilityValue(selected ? "Selected" : "Not selected")
                         .disabled(locked)
@@ -90,7 +90,7 @@ struct PollCardView: View {
                 if poll.kind == "time" {
                     let noneSelected = poll.noneWork(for: store.userID)
                     Button { submit([], poll: poll) } label: { HStack { Image(systemName: noneSelected ? "checkmark.circle.fill" : "circle"); Text("None work"); Spacer() } }
-                        .frame(minHeight: 44).accessibilityValue(noneSelected ? "Selected" : "Not selected").disabled(busy || !poll.canVote() || noneSelected)
+                        .frame(minHeight: 44).foregroundStyle(noneSelected ? PalTheme.accentText : PalTheme.ink).accessibilityValue(noneSelected ? "Selected" : "Not selected").disabled(busy || !poll.canVote() || noneSelected)
                     let unavailable = poll.responses?.filter { $0.optionIDs.isEmpty }.count ?? 0
                     if unavailable > 0 { Text("\(unavailable) \(unavailable == 1 ? "person needs" : "people need") another time").font(.caption).foregroundStyle(.secondary) }
                 }
@@ -136,7 +136,7 @@ struct SourceCardView: View {
                 }.frame(maxWidth: .infinity, maxHeight: 140).clipped().clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
             }
             if let url = source.url.flatMap({ URL(string: $0) }), ["http", "https"].contains(url.scheme ?? "") {
-                Link("Open " + (url.host ?? "source"), destination: url).font(.subheadline).frame(minHeight: 44, alignment: .leading)
+                Link("Open " + (url.host ?? "source"), destination: url).tint(PalTheme.accentText).font(.subheadline).frame(minHeight: 44, alignment: .leading)
             }
             if source.status == "failed" { Text(source.lastError ?? "Couldn’t inspect this video. Open the source or find the place manually.").font(.footnote).foregroundStyle(.secondary) }
             if ["pending", "resolving"].contains(source.status) { ProgressView("Finding places…") }

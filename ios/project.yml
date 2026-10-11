@@ -16,7 +16,13 @@ targets:
   Pal:
     type: application
     platform: iOS
-    sources: [Pal, Shared]
+    sources:
+      - path: Pal
+        excludes: [Mascot]
+      - path: Shared
+      - path: Pal/Mascot
+        type: folder
+        buildPhase: resources
     entitlements:
       path: Pal/Pal.entitlements
       properties:

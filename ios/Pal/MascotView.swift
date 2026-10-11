@@ -1,0 +1,211 @@
+import SwiftUI
+import WebKit
+
+enum PalMascotActivity { case idle, thinking, speaking }
+
+enum PalMascotEmotion {
+    static let all = ["fier", "heureux", "hilare", "curieux", "confus", "surpris", "timide", "triste", "colere", "somnolent", "attentif", "neutre"]
+    static func normalized(_ value: String?) -> String {
+        guard let value, all.contains(value) else { return "fier" }
+        return value
+    }
+}
+
+struct PalMascotAvatar: View {
+    var emotion: String? = nil
+    var activity: PalMascotActivity = .idle
+    var animated = false
+    var size: CGFloat = 40
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var appeared = false
+    @State private var visible = false
+    @State private var ready = false
+    @State private var failed = false
+    private var expression: String { activity == .thinking ? "attentif" : PalMascotEmotion.normalized(emotion) }
+    private var live: Bool { animated && appeared && visible && scenePhase == .active && !reduceMotion && !failed }
+
+    var body: some View {
+        ZStack {
+            Image("PalMascot-" + expression).resizable().scaledToFit()
+                .frame(width: size * 1.5, height: size * 1.5)
+                .opacity(live && ready ? 0 : 1)
+            if live {
+                if activity == .speaking {
+                    player.phaseAnimator([false, true]) { content, phase in
+                        content.offset(y: phase ? -2 : 0).rotationEffect(.degrees(phase ? 2 : -2))
+                    } animation: { _ in .easeInOut(duration: 0.55) }
+                } else { player }
+            }
+        }
+        .frame(width: size, height: size)
+        .allowsHitTesting(false).accessibilityHidden(true)
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: MascotFrame.self, value: geometry.frame(in: .global))
+            }
+        }
+        .onPreferenceChange(MascotFrame.self) { frame in
+            let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows).first(where: \.isKeyWindow)
+            visible = window.map { frame.width > 0 && frame.height > 0 && frame.intersects($0.bounds) } ?? false
+        }
+        .onAppear { appeared = true }
+        .onDisappear { appeared = false; ready = false }
+        .onChange(of: live) { _, _ in ready = false }
+        .onChange(of: animated) { _, _ in failed = false; ready = false }
+        .onChange(of: activity) { _, _ in failed = false }
+        .onChange(of: emotion) { _, _ in failed = false }
+    }
+    private var player: some View {
+        MascotWebPlayer(expression: expression, ready: $ready, failed: $failed)
+            .frame(width: size * 1.5, height: size * 1.5)
+            .opacity(ready ? 1 : 0)
+    }
+}
+
+private struct MascotFrame: PreferenceKey {
+    static var defaultValue = CGRect.zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
+struct MascotWebPlayer: UIViewRepresentable {
+    let expression: String
+    @Binding var ready: Bool
+    @Binding var failed: Bool
+    func makeCoordinator() -> Coordinator { Coordinator(ready: $ready, failed: $failed) }
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        container.backgroundColor = .clear
+        container.isUserInteractionEnabled = false
+        return container
+    }
+    func updateUIView(_ container: UIView, context: Context) {
+        context.coordinator.expression = expression
+        PalMascotPlayer.shared.acquire(context.coordinator, container: container)
+    }
+    static func dismantleUIView(_ container: UIView, coordinator: Coordinator) {
+        PalMascotPlayer.shared.release(coordinator)
+    }
+    @MainActor final class Coordinator {
+        var expression = "fier"
+        fileprivate var active = false
+        let ready: Binding<Bool>
+        let failed: Binding<Bool>
+        init(ready: Binding<Bool>, failed: Binding<Bool>) { self.ready = ready; self.failed = failed }
+        func loaded() {
+            DispatchQueue.main.async {
+                guard self.active else { return }
+                self.ready.wrappedValue = true
+            }
+        }
+        func unloaded() {
+            active = false
+            DispatchQueue.main.async {
+                guard !self.active else { return }
+                self.ready.wrappedValue = false
+            }
+        }
+        func fallback() {
+            active = false
+            DispatchQueue.main.async {
+                guard !self.active else { return }
+                self.ready.wrappedValue = false; self.failed.wrappedValue = true
+            }
+        }
+    }
+}
+
+@MainActor final class PalMascotPlayer: NSObject, WKNavigationDelegate {
+    static let shared = PalMascotPlayer()
+    private(set) weak var owner: MascotWebPlayer.Coordinator?
+    private(set) var webView: WKWebView?
+    private var fileURL: URL?
+    private var loaded = false
+    private var expression: String?
+
+    func acquire(_ coordinator: MascotWebPlayer.Coordinator, container: UIView) {
+        if owner !== coordinator {
+            owner?.fallback()
+            owner = coordinator
+            webView?.removeFromSuperview()
+            expression = nil
+        }
+        coordinator.active = true
+        if webView == nil {
+            guard let file = Bundle.main.url(forResource: "Cloud", withExtension: "html", subdirectory: "Mascot") else {
+                coordinator.fallback(); return
+            }
+            fileURL = file
+            let configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = .nonPersistent()
+            let web = WKWebView(frame: .zero, configuration: configuration)
+            web.isOpaque = false; web.backgroundColor = .clear; web.scrollView.backgroundColor = .clear
+            web.scrollView.isScrollEnabled = false; web.isUserInteractionEnabled = false
+            web.navigationDelegate = self
+            webView = web
+            web.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
+        }
+        guard let webView else { return }
+        if webView.superview !== container {
+            container.addSubview(webView)
+            webView.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                webView.topAnchor.constraint(equalTo: container.topAnchor),
+                webView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            ])
+        }
+        if loaded { configure() }
+    }
+
+    func release(_ coordinator: MascotWebPlayer.Coordinator) {
+        coordinator.unloaded()
+        guard owner === coordinator else { return }
+        owner = nil; loaded = false; expression = nil
+        webView?.evaluateJavaScript("window.Mascot?.configure({active:false}); window.Mascot?.dispose()", completionHandler: nil)
+        webView?.stopLoading()
+        webView?.navigationDelegate = nil
+        webView?.removeFromSuperview()
+        webView = nil; fileURL = nil
+    }
+
+    private func configure() {
+        guard let owner, let webView, owner.expression != expression else { return }
+        expression = owner.expression
+        let values: [String: Any] = ["state": "idle", "expression": owner.expression, "ink": "#ff7a1a", "paper": "#fffff5", "active": true, "reducedMotion": false]
+        guard let data = try? JSONSerialization.data(withJSONObject: values), let json = String(data: data, encoding: .utf8) else {
+            fail(); return
+        }
+        webView.evaluateJavaScript("if (!window.Mascot) throw new Error('Missing mascot player'); window.Mascot.configure(\(json));") { [weak self, weak owner] _, error in
+            guard let self, self.owner === owner else { return }
+            if error == nil { owner?.loaded() }
+            else { self.fail() }
+        }
+    }
+
+    private func fail() {
+        guard let owner else { return }
+        owner.fallback()
+        release(owner)
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard self.webView === webView else { return }
+        loaded = true
+        configure()
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        if self.webView === webView { fail() }
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if self.webView === webView { fail() }
+    }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if self.webView === webView { fail() }
+    }
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let url = navigationAction.request.url
+        decisionHandler(url?.isFileURL == true && url?.standardizedFileURL == fileURL?.standardizedFileURL ? .allow : .cancel)
+    }
+}

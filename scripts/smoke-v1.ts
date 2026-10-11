@@ -223,7 +223,7 @@ const reminder = await action(alice, "reminder.create", { body: "Closed-client v
 const updatedDue = later(15);
 const updated = await action(alice, "reminder.update", { id: reminder.id, due_at: updatedDue });
 assert.ok(updated.version > reminder.version);
-await Promise.all(users.map(user => user.client.auth.signOut()));
+await Promise.all(users.map(user => user.client.auth.signOut({ scope: "local" })));
 console.log("All test clients signed out. Checking durable maintenance and versioned delivery.");
 await sleep(Math.max(1, Date.parse(oldDue) + 500 - Date.now()));
 checked(await db.rpc("pal_maintenance"));

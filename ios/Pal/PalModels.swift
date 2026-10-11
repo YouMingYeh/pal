@@ -70,8 +70,9 @@ struct ChatMessage: Decodable, Identifiable {
     let clientID: UUID?
     let cards: [MessageCard]
     let attachments: [ChatAttachment]
+    let emotion: String?
     enum CodingKeys: String, CodingKey {
-        case id, role, body, cards, attachments
+        case id, role, body, cards, attachments, emotion
         case groupID = "group_id", senderID = "sender_id", createdAt = "created_at", replyToID = "reply_to_id", clientID = "client_id"
     }
     init(from decoder: Decoder) throws {
@@ -86,6 +87,7 @@ struct ChatMessage: Decodable, Identifiable {
         clientID = try c.decodeIfPresent(UUID.self, forKey: .clientID)
         cards = try c.decodeIfPresent([MessageCard].self, forKey: .cards) ?? []
         attachments = try c.decodeIfPresent([ChatAttachment].self, forKey: .attachments) ?? []
+        emotion = try c.decodeIfPresent(String.self, forKey: .emotion)
     }
     /// Keep sender labels and delivery times on the edges of a short message run.
     func follows(_ previous: ChatMessage, calendar: Calendar = .current) -> Bool {
@@ -313,7 +315,36 @@ struct GroupState: Decodable {
     var reminders: [GroupReminder]
     var reactions: [MessageReaction]
     var settings: GroupSettings?
+    var palActivity: PalWorkActivity? = nil
+    enum CodingKeys: String, CodingKey {
+        case members, places, sources, polls, plans, memories, reminders, reactions, settings
+        case palActivity = "pal_activity"
+    }
     static var empty: GroupState { GroupState(members: [], places: [], sources: [], polls: [], plans: [], memories: [], reminders: [], reactions: [], settings: nil) }
+}
+
+/// A live server lease is the only authority for showing Pal at work.
+struct PalWorkActivity: Decodable, Equatable {
+    var activity: String
+    var jobID: UUID?
+    var status: String?
+    var expiresAt: String?
+    enum CodingKeys: String, CodingKey { case activity, status; case jobID = "job_id", expiresAt = "expires_at" }
+    func isThinking(at now: Date = Date()) -> Bool {
+        activity == "thinking" && jobID != nil && ["accepted", "running"].contains(status ?? "") && (expiresAt.flatMap(PalDate.date).map { $0 > now } ?? false)
+    }
+}
+
+/// Polling and opening a chat never replay the historical replies.
+struct PalReplyAnimationState {
+    private var seen: Set<UUID> = []
+    private var hasBaseline = false
+    mutating func receive(_ messages: [ChatMessage]) -> UUID? {
+        defer { seen.formUnion(messages.map(\.id)); hasBaseline = true }
+        guard hasBaseline else { return nil }
+        return messages.last { $0.role == "pal" && !seen.contains($0.id) }?.id
+    }
+    mutating func resume() { hasBaseline = false }
 }
 struct PalProfile: Decodable {
     struct Preferences: Decodable { var enabled: Bool? }

@@ -33,6 +33,8 @@ struct GroupCreateView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var photo: PhotosPickerItem?
+    @State private var showingPhotoLibrary = false
+    @State private var showingCamera = false
     @State private var photoData: Data?
     @State private var photoPreview: UIImage?
     @State private var preparingPhoto = false
@@ -48,23 +50,26 @@ struct GroupCreateView: View {
                 Section {
                     HStack {
                         Spacer()
-                        PhotosPicker(selection: $photo, matching: .images) {
+                        Menu {
+                            Button("Camera", systemImage: "camera") { photo = nil; showingCamera = true }
+                            Button("Photo Library", systemImage: "photo.on.rectangle") { photo = nil; showingPhotoLibrary = true }
+                            if photoData != nil || preparingPhoto {
+                                Button("Remove Photo", systemImage: "trash", role: .destructive, action: removePhoto)
+                            }
+                        } label: {
                             ZStack(alignment: .bottomTrailing) {
                                 if let photoPreview {
                                     Image(uiImage: photoPreview).resizable().scaledToFill().frame(width: 148, height: 148).clipShape(Circle())
                                 } else { AvatarView(name: name, size: 148) }
-                                Image(systemName: "photo.badge.plus").font(.title3).frame(width: 42, height: 42)
+                                Image(systemName: "camera.fill").font(.system(size: 15, weight: .semibold)).frame(width: 32, height: 32)
                                     .background(.regularMaterial, in: Circle())
+                                    .overlay(Circle().stroke(.white.opacity(0.45), lineWidth: 1))
+                                    .accessibilityHidden(true)
                             }
-                        }.buttonStyle(.plain).accessibilityLabel("Choose group photo").disabled(started || busy)
+                        }.buttonStyle(.plain).accessibilityLabel("Edit group photo").disabled(started || busy)
                         Spacer()
                     }.padding(.vertical, 24)
                     if preparingPhoto { ProgressView("Preparing photo…").frame(maxWidth: .infinity) }
-                    if photoData != nil && !started {
-                        Button("Remove photo", role: .destructive) {
-                            photoTask?.cancel(); photo = nil; photoData = nil; photoPreview = nil; preparingPhoto = false
-                        }.frame(maxWidth: .infinity)
-                    }
                 }.listRowBackground(Color.clear)
                 Section {
                     HStack {
@@ -89,10 +94,14 @@ struct GroupCreateView: View {
                 .onChange(of: photo) { _, item in prepare(item) }
                 .onDisappear { photoTask?.cancel() }
         }.interactiveDismissDisabled(busy)
+            .photosPicker(isPresented: $showingPhotoLibrary, selection: $photo, matching: .images)
+            .fullScreenCover(isPresented: $showingCamera) {
+                CameraCapture(onCapture: prepareCameraPhoto, onError: { error = $0.localizedDescription })
+            }
     }
     private func prepare(_ item: PhotosPickerItem?) {
         photoTask?.cancel()
-        guard let item, !started else { return }
+        guard let item, !started else { preparingPhoto = false; return }
         preparingPhoto = true
         error = nil
         photoTask = Task {
@@ -103,8 +112,31 @@ struct GroupCreateView: View {
                 guard !Task.isCancelled else { return }
                 photoData = prepared
                 photoPreview = UIImage(data: prepared)
-            } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
+            } catch { if !Task.isCancelled && !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
         }
+    }
+    private func prepareCameraPhoto(_ data: Data) {
+        guard !started, !busy else { return }
+        photoTask?.cancel()
+        preparingPhoto = true
+        error = nil
+        photoTask = Task {
+            defer { if !Task.isCancelled { preparingPhoto = false } }
+            do {
+                let prepared = try await Task.detached(priority: .userInitiated) { try PalAvatarImage.jpegData(from: data) }.value
+                try Task.checkCancellation()
+                photoData = prepared
+                photoPreview = UIImage(data: prepared)
+            } catch { if !Task.isCancelled && !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
+        }
+    }
+    private func removePhoto() {
+        guard !started, !busy else { return }
+        photoTask?.cancel()
+        photo = nil
+        photoData = nil
+        photoPreview = nil
+        preparingPhoto = false
     }
     private func create() {
         guard !busy, !preparingPhoto, PalGroupAccess.validName(name) else { return }

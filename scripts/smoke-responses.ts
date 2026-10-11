@@ -25,6 +25,7 @@ const users = await Promise.all(["ALICE", "BOB"].map(async name => {
 const [alice, bob] = users;
 const completedJobs = new Map<string, { id: string; attempts: number }>();
 const toolTrace = new Map<string, unknown>();
+const authDiagnostics: { status: number; code: string | undefined }[] = [];
 let sawThinking = false;
 type User = typeof alice;
 type ResponseRow = { user_id: string; option_ids: string[]; source_message_id: string | null };
@@ -35,6 +36,10 @@ async function api(user: User, path: string, method = "GET", body?: unknown) {
     method, headers: { authorization: `Bearer ${user.token}`, "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000), redirect: "error",
   });
+  if (response.status === 401) {
+    const diagnostic = await user.client.auth.getUser(user.token);
+    authDiagnostics.push({ status: diagnostic.error?.status ?? 200, code: diagnostic.error?.code });
+  }
   assert.ok(response.ok, `${method} ${path} returned ${response.status}.`);
   return response.json();
 }
@@ -62,7 +67,7 @@ async function sendAndWait(user: User, body: string) {
             for await (const event of client.sessions.attach(sessionId).stream({ startIndex: 0, follow: false,
               signal: AbortSignal.timeout(7000), streamReconnectPolicy: { reconnect: false } })) {
               if (["actions.requested", "action.result", "result.completed"].includes(event.type)) {
-                toolTrace.set(event.meta.id, { job_id: trigger.coalesced_into || trigger.id, type: event.type, data: event.data });
+                toolTrace.set(`${trigger.coalesced_into || trigger.id}:${event.meta.id}`, { job_id: trigger.coalesced_into || trigger.id, type: event.type, data: event.data });
               }
             }
           } catch { /* Diagnostics cannot fail or restart the actual worker. */ }
@@ -178,7 +183,7 @@ try {
       db.from("plan_rsvps").select("plan_id,user_id,status,source_message_id").eq("group_id", groupId),
     ]);
     await writeFile(".secrets/conversation-smoke-failure.json", JSON.stringify({
-      tool_trace: [...toolTrace.values()], snapshots: diagnostics.map(result => ({ data: result.data, error: result.error?.code ?? null })),
+      auth: authDiagnostics, tool_trace: [...toolTrace.values()], snapshots: diagnostics.map(result => ({ data: result.data, error: result.error?.code ?? null })),
     }, null, 2), { mode: 0o600 });
   }
   throw error;
@@ -187,6 +192,6 @@ try {
     checked(await db.from("groups").update({ agent_paused: true }).eq("id", groupId).eq("creator_id", alice.id));
     checked(await db.from("groups").delete().eq("id", groupId).eq("creator_id", alice.id));
   }
-  await Promise.all(users.map(user => user.client.auth.signOut()));
+  await Promise.all(users.map(user => user.client.auth.signOut({ scope: "local" })));
 }
 console.log("PASS: isolated conversation-check group removed; demo credentials and existing groups were preserved.");

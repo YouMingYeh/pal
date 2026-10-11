@@ -38,9 +38,9 @@ private struct PalSendButton: View {
     @ViewBuilder var body: some View {
         if #available(iOS 26.0, *), !reduceTransparency {
             Button(action: action) { Image(systemName: "arrow.up").font(.body.weight(.semibold)).frame(width: 25, height: 35) }
-                .buttonStyle(.glassProminent).buttonBorderShape(.circle).disabled(disabled).accessibilityLabel("Send message")
+                .buttonStyle(.glassProminent).tint(PalTheme.accent).foregroundStyle(PalTheme.onAccent).buttonBorderShape(.circle).disabled(disabled).accessibilityLabel("Send message")
         } else {
-            Button(action: action) { Image(systemName: "arrow.up").font(.body.weight(.semibold)).foregroundStyle(disabled ? Color.secondary : PalTheme.onInk).frame(width: 44, height: 44).background(disabled ? Color(uiColor: .secondarySystemBackground) : PalTheme.ink, in: Circle()) }
+            Button(action: action) { Image(systemName: "arrow.up").font(.body.weight(.semibold)).foregroundStyle(disabled ? Color.secondary : PalTheme.onAccent).frame(width: 44, height: 44).background(disabled ? Color(uiColor: .secondarySystemBackground) : PalTheme.accent, in: Circle()) }
                 .buttonStyle(.plain).disabled(disabled).accessibilityLabel("Send message")
         }
     }
@@ -97,8 +97,7 @@ struct LoginView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
             Spacer()
-            Image("PalLogo").renderingMode(.original).resizable().scaledToFit()
-                .frame(width: 96, height: 96).accessibilityHidden(true)
+            PalMascotAvatar(size: 96).accessibilityHidden(true)
             Text("Pal").font(.largeTitle.bold())
             Spacer()
             SignInWithAppleButton(.signIn) { request in
@@ -210,7 +209,11 @@ struct ChatView: View {
     @State private var routeCard: MessageCard?
     @State private var pollingError: String?
     @State private var lastRead: UUID?
+    @State private var replyAnimation = PalReplyAnimationState()
+    @State private var speakingMessageID: UUID?
+    @State private var activityExpired = false
     private var state: GroupState { store.states[group.id] ?? .empty }
+    private var palThinking: Bool { !activityExpired && state.palActivity?.isThinking() == true }
     private var pending: [OutgoingMessage] { store.outgoing.filter { item in item.groupID == group.id && item.userID == store.userID && !messages.contains(where: { $0.clientID == item.clientID }) } }
     var body: some View {
         ScrollViewReader { proxy in
@@ -242,19 +245,35 @@ struct ChatView: View {
             .sheet(item: $routeCard) { card in NavigationStack { PalCardView(group: group, card: card).padding().navigationTitle("Details").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { routeCard = nil } } } } }
             .onChange(of: store.requestedEntity) { _, card in if let card { routeCard = card; store.requestedEntity = nil } }
             .task(id: phase) {
+                speakingMessageID = nil
+                replyAnimation.resume()
                 guard phase == .active else { return }
                 if let card = store.requestedEntity { routeCard = card; store.requestedEntity = nil }
                 while !Task.isCancelled { await refresh(); do { try await Task.sleep(for: .seconds(2)) } catch { break } }
             }
+            .task(id: speakingMessageID) {
+                guard let id = speakingMessageID else { return }
+                do { try await Task.sleep(for: .milliseconds(1500)); if speakingMessageID == id { speakingMessageID = nil } } catch { }
+            }
+            .task(id: state.palActivity?.expiresAt) {
+                activityExpired = false
+                guard let expiry = state.palActivity?.expiresAt.flatMap(PalDate.date) else { return }
+                let delay = expiry.timeIntervalSinceNow
+                guard delay > 0 else { activityExpired = true; return }
+                do { try await Task.sleep(for: .seconds(delay)); activityExpired = true } catch { }
+            }
     }
     private var transcript: some View {
         LazyVStack(spacing: 9) {
-            if messages.isEmpty { VStack(spacing: 12) { Image("PalLogo").renderingMode(.original).resizable().scaledToFit().frame(width: 54, height: 54).accessibilityHidden(true); Text("No messages yet").font(.subheadline).foregroundStyle(.secondary) }.padding(.horizontal, 28).padding(.top, 36) }
+            if messages.isEmpty { VStack(spacing: 12) { PalMascotAvatar(size: 54).accessibilityHidden(true); Text("No messages yet").font(.subheadline).foregroundStyle(.secondary) }.padding(.horizontal, 28).padding(.top, 36) }
             ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
                 timelineRow(message, at: index)
             }
             ForEach(pending) { item in
                 HStack { Spacer(minLength: 44); VStack(alignment: .trailing, spacing: 4) { if let media = item.attachment { DraftMediaPreview(draft: media, onRemove: nil) }; if !item.body.isEmpty { Text(item.body).padding(12).foregroundStyle(PalTheme.onInk).background(PalTheme.ink.opacity(0.6), in: RoundedRectangle(cornerRadius: 20)) }; if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(.red).frame(minHeight: 44) } } }.id(item.id)
+            }
+            if palThinking {
+                HStack(spacing: 8) { PalMascotAvatar(activity: .thinking, animated: phase == .active, size: 40).accessibilityHidden(true); Text("Pal is thinking…").font(.caption).foregroundStyle(.secondary); Spacer() }.padding(.top, 4).accessibilityElement(children: .combine)
             }
         }.padding(16)
     }
@@ -311,10 +330,10 @@ struct ChatView: View {
         } else { HStack(alignment: .bottom, spacing: 7) {
             if mine { Spacer(minLength: 44) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
-                if !mine && showSender { HStack(spacing: 5) { if message.role == "pal" { Image("PalLogo").renderingMode(.original).resizable().scaledToFit().frame(width: 18, height: 18).accessibilityHidden(true) }; Text(memberName(message)).font(.caption).foregroundStyle(.secondary) }.padding(.horizontal, 12).padding(.top, 5) }
+                if !mine && (showSender || message.role == "pal") { HStack(spacing: 6) { if message.role == "pal" { PalMascotAvatar(emotion: message.emotion, activity: speakingMessageID == message.id ? .speaking : .idle, animated: speakingMessageID == message.id && !palThinking && phase == .active, size: 40).accessibilityHidden(true) }; Text(memberName(message)).font(.caption).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5) }
                 if let replyID = message.replyToID, let original = messages.first(where: { $0.id == replyID }) { Text("\(memberName(original)): \(original.body)").font(.caption).lineLimit(2).foregroundStyle(.secondary).padding(8).background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10)) }
                 if let body = message.displayedBody(in: state) {
-                    Text(PalText.linked(body)).textSelection(.enabled).tint(mine ? PalTheme.onInk : PalTheme.ink).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+                    Text(PalText.linked(body)).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                         .contextMenu { messageMenu(message, mine: mine) }
                 }
                 ForEach(message.attachments) { media in MessageAttachmentView(attachment: media, onRetry: { Task { await refresh() } }).contextMenu { messageMenu(message, mine: mine) } }
@@ -343,6 +362,7 @@ struct ChatView: View {
             let loaded = try await store.messages(in: group)
             try Task.checkCancellation()
             store.reconcileOutgoing(with: loaded)
+            speakingMessageID = replyAnimation.receive(loaded) ?? speakingMessageID
             messages = loaded
             try await store.loadState(group)
             if let id = loaded.last?.id, lastRead != id, phase == .active {

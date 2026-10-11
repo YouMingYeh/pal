@@ -12,7 +12,9 @@ Confirmed plans schedule future 24-hour and 2-hour attendance reminders. Changes
 
 The composer's plus button offers Photos, Camera and Audio. Draft attachments can be removed before sending; failed sends preserve their original client identity and file for retry. Uploaded photos are decoded, resized and stripped of camera metadata. Photos and voice messages stay in private storage, with temporary links available only to authenticated group members.
 
-Profile has a photo picker, editable name, Google Calendar connection and notification controls. Google uses only the app-created-calendar scope, creates a separate Pal calendar, and receives confirmed plans for members who RSVP Yes. Disconnecting stops updates and revokes credentials; existing Google events remain snapshots. Attending members can also review and save a manual copy through Apple's native Calendar editor. Group details contain members and invitations. Memory, poll creation and agent behavior controls stay out of the demo interface.
+Profile and group avatars open a Camera/Photo Library menu. Profile has an editable name, Google Calendar connection and notification controls. Google uses only the app-created-calendar scope, creates a separate Pal calendar, and receives confirmed plans for members who RSVP Yes. Disconnecting stops updates and revokes credentials; existing Google events remain snapshots. Attending members can also review and save a manual copy through Apple's native Calendar editor. Group details contain members and invitations. Memory, poll creation and agent behavior controls stay out of the demo interface.
+
+Pal's cloud avatar uses the supplied mascot expressions. Each reply retains its server-validated emotion; missing or unknown expressions fall back to the smug face. Actual accepted/running jobs show the focused face, and a fresh reply briefly moves before settling. Historical replies stay still. Only one local player runs; offscreen/background views and Reduce Motion use static artwork. Accent controls use mascot orange while navigation and toolbar controls stay monochrome.
 
 ## Services
 
