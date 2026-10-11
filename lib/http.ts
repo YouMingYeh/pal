@@ -33,6 +33,10 @@ export async function route(action: () => Promise<Response>) {
     if (error instanceof ZodError || error instanceof SyntaxError) {
       return Response.json({ error: "Check your request fields." }, { status: 400 });
     }
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code === "42501") return Response.json({ error: "You cannot make that change." }, { status: 403 });
+    if (["22023", "23503", "23514"].includes(String(code))) return Response.json({ error: "Check the fields and current card state." }, { status: 400 });
+    if (code === "23505") return Response.json({ error: "That record already exists. Refresh and retry." }, { status: 409 });
     console.error("Pal request failed:", error instanceof Error ? error.message : "Unknown failure");
     return Response.json({ error: "Request could not be completed. Please retry." }, { status: 503 });
   }

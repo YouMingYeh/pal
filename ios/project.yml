@@ -7,6 +7,8 @@ settings:
     SWIFT_VERSION: '5.0'
     DEVELOPMENT_TEAM: '6GAAMYMS72'
     CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: '1.0'
+    CURRENT_PROJECT_VERSION: '2'
 configFiles:
   Debug: Config.xcconfig
   Release: Config.xcconfig
@@ -14,11 +16,15 @@ targets:
   Pal:
     type: application
     platform: iOS
-    sources: [Pal]
+    sources: [Pal, Shared]
     entitlements:
       path: Pal/Pal.entitlements
       properties:
         com.apple.developer.applesignin: [Default]
+        aps-environment: $(PAL_APNS_ENVIRONMENT)
+        com.apple.security.application-groups: [group.com.pal.spike]
+        keychain-access-groups: [$(AppIdentifierPrefix)com.pal.spike.shared, $(AppIdentifierPrefix)com.pal.spike]
+        com.apple.developer.associated-domains: [applinks:pal-jade.vercel.app]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pal.spike
@@ -26,15 +32,51 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Pal
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        PAL_APNS_ENVIRONMENT: development
+        PAL_PUSH_ENVIRONMENT: sandbox
         TARGETED_DEVICE_FAMILY: '1,2'
+      configs:
+        Release:
+          PAL_APNS_ENVIRONMENT: production
+          PAL_PUSH_ENVIRONMENT: production
     info:
       path: Pal/Info.plist
       properties:
         SupabaseURL: $(SUPABASE_URL)
         SupabasePublishableKey: $(SUPABASE_PUBLISHABLE_KEY)
         PalAPIURL: $(PAL_API_URL)
+        PalKeychainAccessGroup: $(AppIdentifierPrefix)com.pal.spike.shared
+        PalPushEnvironment: $(PAL_PUSH_ENVIRONMENT)
+        CFBundleURLTypes:
+          - CFBundleURLName: com.pal.spike
+            CFBundleURLSchemes: [pal]
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+    dependencies:
+      - target: PalShare
+        embed: true
+  PalShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Share
+        excludes: [Tests]
+      - path: Pal/PalStore.swift
+      - path: Pal/PalModels.swift
+      - path: Shared
+    entitlements:
+      path: Share/Share.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.pal.spike]
+        keychain-access-groups: [$(AppIdentifierPrefix)com.pal.spike.shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pal.spike.Share
+        APPLICATION_EXTENSION_API_ONLY: YES
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Share/Info.plist
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: '1,2'
   PalTests:
     type: bundle.unit-test
     platform: iOS

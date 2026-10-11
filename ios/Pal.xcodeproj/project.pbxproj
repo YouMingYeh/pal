@@ -7,14 +7,33 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		10C3BBC075B35D721480EADD /* NativeServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F75E356BE8C70C232165D3C /* NativeServices.swift */; };
+		1EE09B99987D4EA02BFF335C /* SettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DADA4FFAEAFA3D5257E7643D /* SettingsViews.swift */; };
+		294FF5CD7D1120FBBE94FD30 /* GroupViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6B05588AFFC774B98F506B /* GroupViews.swift */; };
 		2B15065AAFA4FEE9C28E7EF9 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */; };
 		2E134CFE129D6CFA85515D86 /* PalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D7C60E655D843D1BED0D0B2 /* PalTests.swift */; };
+		3A76AFF126F29A8DDCFEFD6A /* PalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3199B39DF7A2E23079D49E8 /* PalModels.swift */; };
 		661649F05F2D1060FA1473D7 /* PalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6BC3535EFC4889BBE81CF1F /* PalStore.swift */; };
+		69A2FD4A03F83918343D2571 /* SharePayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98BBDEC957AADA768E424224 /* SharePayload.swift */; };
 		7460D1FA42AD213B00A903CD /* PalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C88929C3861C7A8FEB94B9D /* PalApp.swift */; };
+		8F08E1EC98CFC88D06A5F7C8 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E1E2F9EF8B322C89126EA /* Session.swift */; };
+		8F8FCE6561D85B1DDFF7B026 /* PalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6BC3535EFC4889BBE81CF1F /* PalStore.swift */; };
+		97BD8AE001629527A9B2D739 /* PalShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BB4A5335926110F52607F2F2 /* PalShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AD3E8CF764BF0BD1003960CB /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76582FE248D91909FDC58AFF /* ShareViewController.swift */; };
+		C0F4634D5863364F9CC77957 /* Cards.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA03BD836188F8D6E6DE8284 /* Cards.swift */; };
+		C5E052831ED7696DED5888B8 /* PalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3199B39DF7A2E23079D49E8 /* PalModels.swift */; };
 		DD1EAB252B10433ED52B6AD6 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91916F06B448D4DD9F4899AC /* Views.swift */; };
+		DE32C06D20240D56DD61F281 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E1E2F9EF8B322C89126EA /* Session.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		A31E06F0DB1C23FE3CF15480 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 86B02A443D59A57FA297B980 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5C9F9E6B854BDBAD8ADF12AC;
+			remoteInfo = PalShare;
+		};
 		C7466B3CBBE368523EAE0BDA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 86B02A443D59A57FA297B980 /* Project object */;
@@ -24,16 +43,41 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		31BB1CA73902304C8CBE007F /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				97BD8AE001629527A9B2D739 /* PalShare.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		0B6B05588AFFC774B98F506B /* GroupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupViews.swift; sourceTree = "<group>"; };
+		3F75E356BE8C70C232165D3C /* NativeServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeServices.swift; sourceTree = "<group>"; };
 		6ECB52FD5C6EA8F4E85582B5 /* Pal.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Pal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		76582FE248D91909FDC58AFF /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		8D7C60E655D843D1BED0D0B2 /* PalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalTests.swift; sourceTree = "<group>"; };
 		91916F06B448D4DD9F4899AC /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
+		98BBDEC957AADA768E424224 /* SharePayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePayload.swift; sourceTree = "<group>"; };
 		9C88929C3861C7A8FEB94B9D /* PalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalApp.swift; sourceTree = "<group>"; };
 		A4A10EFFE5BF0968495B2284 /* PalTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A57E1E2F9EF8B322C89126EA /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
 		A6BC3535EFC4889BBE81CF1F /* PalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalStore.swift; sourceTree = "<group>"; };
 		A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
+		B43FC484ABC09349014E7F82 /* Share.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Share.entitlements; sourceTree = "<group>"; };
+		B843A5464B654524A098D7D4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		BB4A5335926110F52607F2F2 /* PalShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PalShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C6935B627C04EB82CE57CE0D /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		CA03BD836188F8D6E6DE8284 /* Cards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cards.swift; sourceTree = "<group>"; };
 		CF1F6907C77B7FC03D7D47D9 /* Pal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pal.entitlements; sourceTree = "<group>"; };
+		DADA4FFAEAFA3D5257E7643D /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
+		E3199B39DF7A2E23079D49E8 /* PalModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalModels.swift; sourceTree = "<group>"; };
 		E5F2FA3E3E82587B666C8E4A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -42,9 +86,21 @@
 			isa = PBXGroup;
 			children = (
 				6ECB52FD5C6EA8F4E85582B5 /* Pal.app */,
+				BB4A5335926110F52607F2F2 /* PalShare.appex */,
 				A4A10EFFE5BF0968495B2284 /* PalTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		0506EF67117F44E29B3C1762 /* Share */ = {
+			isa = PBXGroup;
+			children = (
+				B843A5464B654524A098D7D4 /* Info.plist */,
+				B43FC484ABC09349014E7F82 /* Share.entitlements */,
+				98BBDEC957AADA768E424224 /* SharePayload.swift */,
+				76582FE248D91909FDC58AFF /* ShareViewController.swift */,
+			);
+			path = Share;
 			sourceTree = "<group>";
 		};
 		15997A1802113B8C59694A91 /* PalTests */ = {
@@ -70,6 +126,8 @@
 				34300563BC22910F8794BA7D /* ios */,
 				F49B33858164AC26E7795C34 /* Pal */,
 				15997A1802113B8C59694A91 /* PalTests */,
+				0506EF67117F44E29B3C1762 /* Share */,
+				FC30335816C161D4EDB88729 /* Shared */,
 				0121C6AF5F75E21EDE1EA79A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -78,18 +136,48 @@
 			isa = PBXGroup;
 			children = (
 				A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */,
+				CA03BD836188F8D6E6DE8284 /* Cards.swift */,
+				0B6B05588AFFC774B98F506B /* GroupViews.swift */,
 				E5F2FA3E3E82587B666C8E4A /* Info.plist */,
+				3F75E356BE8C70C232165D3C /* NativeServices.swift */,
 				CF1F6907C77B7FC03D7D47D9 /* Pal.entitlements */,
 				9C88929C3861C7A8FEB94B9D /* PalApp.swift */,
+				E3199B39DF7A2E23079D49E8 /* PalModels.swift */,
 				A6BC3535EFC4889BBE81CF1F /* PalStore.swift */,
+				DADA4FFAEAFA3D5257E7643D /* SettingsViews.swift */,
 				91916F06B448D4DD9F4899AC /* Views.swift */,
 			);
 			path = Pal;
 			sourceTree = "<group>";
 		};
+		FC30335816C161D4EDB88729 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				A57E1E2F9EF8B322C89126EA /* Session.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		5C9F9E6B854BDBAD8ADF12AC /* PalShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E490E7520626C92EF592B75C /* Build configuration list for PBXNativeTarget "PalShare" */;
+			buildPhases = (
+				4A60839D0949DDB5163A09F1 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PalShare;
+			packageProductDependencies = (
+			);
+			productName = PalShare;
+			productReference = BB4A5335926110F52607F2F2 /* PalShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		BF5AE344DBF4A1A459E5266E /* PalTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 75392DC74FF9B237BFD73F26 /* Build configuration list for PBXNativeTarget "PalTests" */;
@@ -113,10 +201,12 @@
 			buildConfigurationList = EEC22BD05FE6B03DD2F69B09 /* Build configuration list for PBXNativeTarget "Pal" */;
 			buildPhases = (
 				48962BE48C57B7DFB95B4FF7 /* Sources */,
+				31BB1CA73902304C8CBE007F /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				F5A8E3CD1109F5DA6A2AEAAF /* PBXTargetDependency */,
 			);
 			name = Pal;
 			packageProductDependencies = (
@@ -134,6 +224,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					5C9F9E6B854BDBAD8ADF12AC = {
+						DevelopmentTeam = 6GAAMYMS72;
+						ProvisioningStyle = Automatic;
+					};
 					BF5AE344DBF4A1A459E5266E = {
 						DevelopmentTeam = 6GAAMYMS72;
 						ProvisioningStyle = Automatic;
@@ -159,6 +253,7 @@
 			projectRoot = "";
 			targets = (
 				D4A69856C0B6BE8D217A5487 /* Pal */,
+				5C9F9E6B854BDBAD8ADF12AC /* PalShare */,
 				BF5AE344DBF4A1A459E5266E /* PalTests */,
 			);
 		};
@@ -170,9 +265,27 @@
 			buildActionMask = 2147483647;
 			files = (
 				2B15065AAFA4FEE9C28E7EF9 /* AppleSignIn.swift in Sources */,
+				C0F4634D5863364F9CC77957 /* Cards.swift in Sources */,
+				294FF5CD7D1120FBBE94FD30 /* GroupViews.swift in Sources */,
+				10C3BBC075B35D721480EADD /* NativeServices.swift in Sources */,
 				7460D1FA42AD213B00A903CD /* PalApp.swift in Sources */,
+				3A76AFF126F29A8DDCFEFD6A /* PalModels.swift in Sources */,
 				661649F05F2D1060FA1473D7 /* PalStore.swift in Sources */,
+				8F08E1EC98CFC88D06A5F7C8 /* Session.swift in Sources */,
+				1EE09B99987D4EA02BFF335C /* SettingsViews.swift in Sources */,
 				DD1EAB252B10433ED52B6AD6 /* Views.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4A60839D0949DDB5163A09F1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C5E052831ED7696DED5888B8 /* PalModels.swift in Sources */,
+				8F8FCE6561D85B1DDFF7B026 /* PalStore.swift in Sources */,
+				DE32C06D20240D56DD61F281 /* Session.swift in Sources */,
+				69A2FD4A03F83918343D2571 /* SharePayload.swift in Sources */,
+				AD3E8CF764BF0BD1003960CB /* ShareViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -192,9 +305,33 @@
 			target = D4A69856C0B6BE8D217A5487 /* Pal */;
 			targetProxy = C7466B3CBBE368523EAE0BDA /* PBXContainerItemProxy */;
 		};
+		F5A8E3CD1109F5DA6A2AEAAF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5C9F9E6B854BDBAD8ADF12AC /* PalShare */;
+			targetProxy = A31E06F0DB1C23FE3CF15480 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		529DE7A74105E43E6A8E07AB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Share/Share.entitlements;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Share/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pal.spike.Share;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		551B932E9C50B9EC9AF4E0F2 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -227,6 +364,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				PAL_APNS_ENVIRONMENT = development;
+				PAL_PUSH_ENVIRONMENT = sandbox;
 				PRODUCT_BUNDLE_IDENTIFIER = com.pal.spike;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -248,6 +387,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				PAL_APNS_ENVIRONMENT = production;
+				PAL_PUSH_ENVIRONMENT = production;
 				PRODUCT_BUNDLE_IDENTIFIER = com.pal.spike;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -290,6 +431,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 6GAAMYMS72;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -303,6 +445,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -366,6 +509,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 6GAAMYMS72;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -385,6 +529,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -395,6 +540,25 @@
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
+		};
+		F55AAB9292EAF46C18E5A7E6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Share/Share.entitlements;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Share/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pal.spike.Share;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
@@ -413,6 +577,15 @@
 			buildConfigurations = (
 				C531668025410000B3F49BEB /* Debug */,
 				551B932E9C50B9EC9AF4E0F2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E490E7520626C92EF592B75C /* Build configuration list for PBXNativeTarget "PalShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				529DE7A74105E43E6A8E07AB /* Debug */,
+				F55AAB9292EAF46C18E5A7E6 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

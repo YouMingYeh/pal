@@ -8,5 +8,6 @@ node_modules/
 *.tsbuildinfo
 .DS_Store
 .serena/
+.secrets/
 supabase/.temp/
 .vercel

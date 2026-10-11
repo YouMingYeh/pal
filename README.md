@@ -1,15 +1,29 @@
 # Pal
 
-Native iOS group chat with an Eve/OpenAI agent and reminders persisted in Supabase.
+Native iOS group chat with Eve/OpenAI, Supabase, saved places, planning cards, reminders, and personal Google Calendar sync.
 
-Open `ios/Pal.xcodeproj`, select an iPhone simulator, and run. The app already contains the public client configuration for `https://pal-jade.vercel.app`. Sign in with Apple, create a group, and share its invite code with the second user. The project uses Kardomo's developer team (`6GAAMYMS72`); the Apple capability and Supabase Apple provider are enabled for `com.pal.spike`.
+Open ios/Pal.xcodeproj and run the Pal scheme. The checked-in public configuration points to https://pal-jade.vercel.app. Sign in with Apple, create or join a group, then invite a second member using the shareable link or invite code. Kardomo developer team: 6GAAMYMS72. App: com.pal.spike. Share extension: com.pal.spike.Share.
 
-Demo: discuss who will bring snacks and a laptop, then send `@Pal summarize our plan and remind us to bring the charger in two minutes`. Pal reads the actual group messages and saves a reminder. Close the app; Supabase Cron posts the reminder to the group independently. Reopen the chat to see it. Delivery runs once per minute; this spike does not send APNs notifications.
+## Flow
 
-The live integration check passed with two authenticated users, duplicate-message protection, outsider isolation, a real Eve/OpenAI tool call, and exactly one reminder delivered after all clients signed out and the local backend stopped. A second task submitted directly to Supabase was recovered by server Cron after the clients signed out. Native integration uses test accounts; the actual Apple account sign-in still requires a device check. Local demo account credentials are stored only in ignored `.env.demo.local`.
+Share a restaurant reel or paste a URL. Its source card progresses through inspection and lets members choose a branch or add a place manually. Saved places appear on the group map. Discuss a time; Pal selectively remembers explicit preferences and dated availability and can create polls or a draft plan without an @ mention. A member confirms the plan, and each person RSVPs separately. A member completes any external booking and records its details.
 
-For local backend development, use Node 24, run `npm ci`, configure an ignored root `.env` using `.env.example`, and run `npm run dev`. Set `PAL_BASE_URL=http://127.0.0.1:3000` locally. Server keys never belong in the iOS app or Git.
+Confirmed plans schedule future 24-hour and 2-hour attendance reminders. Changes reset affected RSVPs and replace superseded reminders and Google event copies. The server posts reminder messages and sends APNs independently of the app. Notification taps open the relevant group card.
 
-Checks: `npm run typecheck`, `npm test`, `npm run build`, and `npm run smoke` (requires configured services; creates isolated demo accounts and waits for real Cron delivery). Native simulator tests and configuration are described in `ios/README.md`; migrations and database assertions are in `supabase/README.md`.
+Profile contains Google Calendar connection and notification controls. Google uses only the app-created-calendar scope, creates a separate Pal calendar, and receives confirmed plans for members who RSVP Yes. Disconnecting stops updates and revokes credentials; existing Google events remain snapshots. Group details contain editable preferences, availability, proactive suggestions, and personal group muting.
 
-The agent exposes only group-message reading and reminder creation. Maps, browser automation, calendar sync, games, and push notifications remain outside this infra spike.
+## Services
+
+- Supabase owns membership, source/place/poll/plan records, idempotent actions, private integration credentials and queues. Row-level security isolates groups.
+- Eve runs durable scoped OpenAI turns; every human message is eligible, bursts are coalesced, and an empty structured reply means silence. Agent tools cannot confirm, vote, RSVP, or book for a person.
+- Supadata inspects public Instagram/TikTok video content asynchronously. Extraction retains evidence and source metadata. Apple Maps search resolves candidates; uncertain places remain unpinned until corrected. Video prices and claims are distinct from current verified information.
+- Safe URL reading checks public DNS, redirects, IP pinning, response size and timeouts. Research prefers official menus and reservation pages; it does not invent table availability.
+- Minutely Supabase Cron delivers reminders and recovers jobs. The authenticated dispatch worker processes video inspection, Google Calendar copies, and APNs delivery.
+
+## Development and checks
+
+Use Node 24 and npm ci. Configure the ignored root .env using .env.example, then npm run dev. Set PAL_BASE_URL to the actual backend origin. Provider keys and Google refresh tokens are server-side; the iOS app contains only public client configuration. Keep PAL_INTERNAL_SECRET stable because it encrypts integration credentials. Apple private keys use base64 PEM environment variables.
+
+Run npm test, npm run typecheck, and npm run build. npm run smoke:v1 exercises the deployed v1 flow using ignored demo identities; it creates isolated groups and checks real Eve completion plus closed-client reminder delivery. The historical smoke script targets the original spike. Native build/tests and physical-device setup are in ios/README.md. Migrations and PostgreSQL assertions are in supabase/README.md.
+
+Member location sharing, automatic bookings, two-way calendar sync, games, image generation, and a personal feed are deferred. Social providers may reject private or inaccessible videos; the original link and manual correction remain available.

@@ -1,6 +1,7 @@
 ios/
 supabase/
 .serena/
+.secrets/
 .env*
 tests/
 *.md

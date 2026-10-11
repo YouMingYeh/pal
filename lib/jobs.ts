@@ -1,6 +1,8 @@
 import { Client } from "eve/client";
 import { admin, checked, env } from "./db";
-import type { Job } from "./job-scope";
+import { jobScope, type Job } from "./job-scope";
+import { agentReply, sharedUrls } from "./validation";
+import { assertPublicURL } from "./research";
 
 export async function dispatchJobs() {
   const db = admin();
@@ -13,31 +15,45 @@ export async function dispatchJobs() {
       });
       let sessionId = job.result ? JSON.parse(job.result).sessionId as string | undefined : undefined;
       let body: string | undefined;
+      let structured: unknown;
       if (sessionId) {
         // shortcut: one turn per job, recover its durable stream instead of sending the request twice.
         for await (const event of client.sessions.attach(sessionId).stream()) {
           if (event.type === "message.completed") body = event.data.message;
+          if (event.type === "result.completed") structured = event.data.result;
           if (event.type === "turn.failed" || event.type === "session.failed") throw new Error("Pal's durable task failed.");
           if (event.type === "turn.completed" || event.type === "turn.waiting" || event.type === "session.waiting" || event.type === "session.completed") break;
         }
       } else {
-        const source = checked(await db.from("messages").select("body").eq("id", job.message_id).single());
-        if (!source) throw new Error("Task message is unavailable.");
+        const { batch } = await jobScope(job.id);
+        const unavailableUrls: string[] = [];
+        for (const source of batch) {
+          for (const url of sharedUrls(source.body)) {
+            try { await assertPublicURL(url); }
+            catch { unavailableUrls.push(url); continue; }
+          }
+        }
+        const state = checked(await db.rpc("pal_group_state", { p_group_id: job.group_id }));
+        const timezone = state?.settings?.timezone || "UTC";
         const created = await client.sessions.create({
-          message: source.body,
-          clientContext: { currentTime: new Date().toISOString(), timezone: "America/Los_Angeles" },
+          message: JSON.stringify({ kind: job.job_kind ?? "chat", explicitMention: job.explicit_mention ?? false, messages: batch }),
+          clientContext: { currentTime: new Date().toISOString(), timezone, unavailableUrls },
+          outputSchema: agentReply,
         });
         sessionId = created.response.sessionId;
-        checked(await db.from("agent_jobs").update({ result: JSON.stringify({ sessionId }) })
+        checked(await db.from("agent_jobs").update({ result: JSON.stringify({ sessionId, format: "v1" }) })
           .eq("id", job.id).eq("attempts", job.attempts).eq("status", "running"));
         const result = await created.response.result();
         if (result.status === "failed") throw new Error("Pal's durable task failed.");
         body = result.message;
+        structured = result.data;
       }
-      if (!body?.trim()) throw new Error("Pal did not return a reply.");
+      const oldSession = job.result && JSON.parse(job.result).format !== "v1";
+      if (structured !== undefined) body = agentReply.parse(structured).reply.trim();
+      else if (!oldSession) throw new Error("Pal did not return a structured result.");
       checked(await db.rpc("complete_agent_job", {
         p_job_id: job.id, p_attempt: job.attempts, p_body: body,
-        p_result: JSON.stringify({ sessionId }),
+        p_result: JSON.stringify({ sessionId, format: "v1" }),
       }));
     } catch (error) {
       // Terminal task failures must create a new Eve session on a future retry.

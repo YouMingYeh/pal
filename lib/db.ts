@@ -19,7 +19,7 @@ export function userClient(token: string) {
   });
 }
 
-export function checked<T>({ data, error }: { data: T; error: { message: string } | null }): T {
-  if (error) throw new Error(error.message);
+export function checked<T>({ data, error }: { data: T; error: { message: string; code?: string } | null }): T {
+  if (error) throw Object.assign(new Error(error.message), { code: error.code });
   return data;
 }

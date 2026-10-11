@@ -1,28 +1,23 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { checked } from "../../lib/db";
-import { jobScope, scopeId } from "../../lib/job-scope";
-import { validateReminder } from "../../lib/validation";
+import { agentAction, batchSpeaker, jobScope, scopeId } from "../../lib/job-scope";
+import { id, timezone, validateReminder } from "../../lib/validation";
 
 export default defineTool({
-  description: "Save one reminder requested by the user for this group. Posts to chat at the specified future time even with the app closed.",
+  description: "Save one explicitly requested reminder for its verified speaker. Target members get a server reminder even after closing the app.",
   inputSchema: z.object({
-    body: z.string().trim().min(1).max(1000),
-    due_at: z.string().datetime({ offset: true }),
-    timezone: z.string().min(1).max(80),
+    source_message_id: id, body: z.string().trim().min(1).max(2000),
+    due_at: z.string().datetime({ offset: true }), timezone,
+    target_user_ids: z.array(id).max(50).optional(), plan_id: id.optional(), poll_id: id.optional(),
   }),
-  async execute(input, context) {
-    const { job, db } = await jobScope(scopeId(context));
-    const source = checked(await db.from("messages").select("body").eq("id", job.message_id).single());
-    if (!source || !/remind|提醒/i.test(source.body)) throw new Error("The requester did not ask for a reminder.");
-    const sourceKey = `job:${job.id}`;
-    const existing = checked(await db.from("reminders").select("id")
-      .eq("group_id", job.group_id).eq("source_key", sourceKey).maybeSingle());
-    const dueAt = existing ? input.due_at : validateReminder(input.due_at, input.timezone);
-    const reminder = checked(await db.rpc("create_reminder", {
-      p_group_id: job.group_id, p_requester_id: job.requester_id, p_body: input.body,
-      p_due_at: dueAt, p_timezone: input.timezone, p_source_key: sourceKey,
-    }));
-    return { saved: true, reminder };
+  async execute({ source_message_id, ...input }, context) {
+    const { db, job, batch } = await jobScope(scopeId(context));
+    const source = batchSpeaker(batch, source_message_id);
+    if (!/remind|提醒/i.test(source.body)) throw new Error("This speaker did not ask for a reminder.");
+    const existing = await db.from("reminders").select("id").eq("group_id", job.group_id)
+      .eq("requester_id", source.sender_id).eq("body", input.body).eq("due_at", input.due_at).maybeSingle();
+    if (existing.error) throw new Error(existing.error.message);
+    if (!existing.data) validateReminder(input.due_at, input.timezone);
+    return agentAction(context, "reminder.create", input, `reminder:${source.id}`, source_message_id);
   },
 });
