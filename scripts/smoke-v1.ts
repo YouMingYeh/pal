@@ -130,6 +130,11 @@ const poll = await action(alice, "poll.create", {
   options: [{ id: "fri", label: "Friday", starts_at: later(172800) }, { id: "sat", label: "Saturday", starts_at: later(259200) }],
   source_key: `smoke:${randomUUID()}`,
 });
+await action(alice, "poll.vote", { id: poll.id, option_ids: [] });
+current = await state();
+const explicitNone = current.polls.find((p: Row) => p.id === poll.id);
+assert.deepEqual(explicitNone.responses.find((r: Row) => r.user_id === alice.id).option_ids, [], "None work is a real response, not unknown availability.");
+assert.equal(explicitNone.responses.some((r: Row) => r.user_id === bob.id), false, "Another member remains unanswered.");
 await action(alice, "poll.vote", { id: poll.id, option_ids: ["fri"] });
 current = await state();
 assert.equal(current.polls.find((p: Row) => p.id === poll.id).votes.some((v: Row) => v.user_id === bob.id), false, "Unknown member availability stays unanswered.");
@@ -138,6 +143,14 @@ assert.deepEqual((await state()).polls.find((p: Row) => p.id === poll.id).votes.
 await action(bob, "poll.vote", { id: poll.id, option_ids: ["fri", "sat"] });
 assert.ok((await state()).reminders.filter((r: Row) => r.poll_id === poll.id).every((r: Row) => r.status === "cancelled"));
 await denied(alice, statePath, "POST", { action: "poll.vote", data: { id: poll.id, option_ids: ["invented"] } });
+const placePoll = await action(alice, "poll.create", {
+  kind: "place", question: "Choose a location", deadline_at: later(600),
+  options: [{ id: "saved", label: place.name, place_id: place.id }, { id: "elsewhere", label: "Another location" }],
+  source_key: `smoke:${randomUUID()}`,
+});
+await denied(alice, statePath, "POST", { action: "poll.vote", data: { id: placePoll.id, option_ids: [] } });
+await action(alice, "poll.vote", { id: placePoll.id, option_ids: ["saved"] });
+await action(bob, "poll.vote", { id: placePoll.id, option_ids: ["saved"] });
 const ownMemory = await action(alice, "memory.save", { kind: "preference", key: "food", value: "vegetarian", source_message_id: original.id });
 assert.equal(ownMemory.user_id, alice.id);
 await denied(bob, statePath, "POST", { action: "memory.save", data: { kind: "preference", key: "food", value: "meat", source_message_id: original.id } });

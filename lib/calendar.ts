@@ -104,6 +104,7 @@ async function ensureCalendar(connection: Connection, token: string) {
   if (connection.calendar_id && connection.calendar_id !== "primary") return connection.calendar_id;
   const claimed = await integrationUpdate<Connection | null>("google_connections", connection.id, { op: "claim" });
   if (!claimed) throw new Error("Calendar connection is being completed. Retry shortly.");
+  // An ambiguous provider timeout here can leave an empty secondary calendar; this scope cannot list calendars to recover its unknown ID.
   const created = await googleRequest(token, "/calendars", "POST", { summary: "Pal", description: "Plans confirmed in Pal." });
   if (typeof created.id !== "string" || created.id === "primary") throw new GoogleError(502);
   const saved = await integrationUpdate<{ ok: boolean }>("google_connections", connection.id, {
@@ -154,7 +155,11 @@ export async function googleConnectionStatus(userId: string) {
 export async function disconnectGoogle(userId: string) {
   const connection = await getConnection(userId);
   if (!connection) return;
-  await integrationUpdate("google_connections", connection.id, { op: "put", user_id: userId, status: "revoked", error: null });
+  const revoked = await integrationUpdate<Connection | null>("google_connections", connection.id, {
+    op: "put", user_id: userId, status: "revoked", error: null,
+    expected_status: connection.status, expected_encrypted_refresh_token: connection.encrypted_refresh_token,
+  });
+  if (!revoked) return;
   try {
     if (connection.encrypted_refresh_token) {
       const response = await fetch("https://oauth2.googleapis.com/revoke", {
@@ -167,6 +172,7 @@ export async function disconnectGoogle(userId: string) {
   } finally {
     await integrationUpdate("google_connections", connection.id, {
       op: "put", user_id: userId, status: "revoked", encrypted_refresh_token: "", encrypted_access_token: null, expires_at: null,
+      expected_status: "revoked", expected_encrypted_refresh_token: connection.encrypted_refresh_token,
     });
   }
 }
@@ -211,6 +217,8 @@ export async function writeGoogleEvent(sync: CalendarSync, token: string, calend
     catch (insertError) {
       if (!(insertError instanceof GoogleError) || insertError.status !== 409) throw insertError;
       const current = await googleRequest(token, path);
+      const currentProperties = current.extendedProperties as typeof properties;
+      if (Number(currentProperties?.private?.palSyncRevision || currentProperties?.private?.palVersion) > sync.desired_version) return eventId;
       await googleRequest(token, path, "PUT", { ...event, sequence: typeof current.sequence === "number" ? current.sequence + 1 : 1 }, typeof current.etag === "string" ? current.etag : undefined);
     }
   }

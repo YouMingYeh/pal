@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { actionInput, agentReply, deviceInput, parseAgentAction, profileInput, sharedUrls } from "../lib/validation";
-import { batchSpeaker, type SourceMessage } from "../lib/job-scope";
+import { actionSourceKey, batchSpeaker, type SourceMessage } from "../lib/job-scope";
 
 const messageId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const otherId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -25,6 +25,8 @@ test("facts are scoped to the real speaker in a frozen batch", () => {
 });
 
 test("polls and plans reject contradictory structured data", () => {
+  assert.equal(actionInput.parse({ action: "poll.vote", data: { id: messageId, option_ids: [] } }).action, "poll.vote", "An explicit empty time response is distinct from never responding; SQL checks poll kind.");
+  assert.throws(() => actionInput.parse({ action: "poll.vote", data: { id: messageId, option_ids: [], user_id: otherId } }));
   assert.throws(() => actionInput.parse({ action: "poll.create", data: {
     kind: "time", question: "When?", deadline_at: "2026-10-15T18:00:00Z", options: [{ id: "same", label: "Fri" }, { id: "same", label: "Sat" }],
   } }));
@@ -53,4 +55,11 @@ test("URL ingestion is bounded and selective agent results support genuine silen
   assert.equal(sharedUrls(Array.from({ length: 20 }, (_, index) => `https://example.com/${index}`).join(" ")).length, 10);
   assert.equal(agentReply.parse({ reply: "" }).reply, "");
   assert.throws(() => agentReply.parse({ reply: "Hello", arbitrary_html: "<script/>" }));
+});
+
+test("reminder retry identity is scoped to its job and source, rather than shared reminder contents", () => {
+  const original = actionSourceKey(messageId, "reminder.create", otherId);
+  assert.equal(actionSourceKey(messageId, "reminder.create", otherId), original);
+  assert.notEqual(actionSourceKey(otherId, "reminder.create", otherId), original, "Two requests with identical bodies remain separate tasks.");
+  assert.notEqual(actionSourceKey(messageId, "reminder.create", messageId), original, "Two speakers' source messages cannot share a retry identity.");
 });

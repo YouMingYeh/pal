@@ -154,16 +154,26 @@ do $$
 begin
   assert private.pal_next_awake('2026-01-02 06:00:00+00','UTC')='2026-01-02 09:00:00+00'::timestamptz,'Quiet early morning waits until 9';
   assert private.pal_next_awake('2026-01-02 23:00:00+00','UTC')='2026-01-03 09:00:00+00'::timestamptz,'Quiet late evening waits until next morning';
+  assert private.pal_canonical_url('https://www.instagram.com/reel/DbKdS2nA21V/?xtok=tracking')=private.pal_canonical_url('https://www.instagram.com/reel/DbKdS2nA21V/'),'Instagram xtok does not split source identity';
+  assert private.pal_canonical_url('https://example.com/item?item=123&xtok=tracking&view=map')='https://example.com/item?item=123&view=map','Removing tracking preserves meaningful query parameters';
+  insert into public.sources(group_id,created_by,url,canonical_url)
+    values(current_setting('pal.test.group')::uuid,'10000000-0000-4000-8000-000000000001','https://www.instagram.com/reel/DbKdS2nA21V/?xtok=tracking',private.pal_canonical_url('https://www.instagram.com/reel/DbKdS2nA21V/?xtok=tracking'));
+  assert (select url='https://www.instagram.com/reel/DbKdS2nA21V/?xtok=tracking' from public.sources where canonical_url='https://www.instagram.com/reel/DbKdS2nA21V'),'Canonicalization preserves original shared URL';
 end $$;
 set local role authenticated;
 select public.pal_action(current_setting('pal.test.group')::uuid,'group.settings','{"agent_paused":false,"proactive_suggestions":true}');
 set local role service_role;
 do $$
-declare m uuid;
+declare m uuid; routed uuid;
 begin
   insert into public.messages(group_id,role,body,source_key) values(current_setting('pal.test.group')::uuid,'system','Weekly test','test-weekly') returning id into m;
   insert into public.agent_jobs(message_id,group_id,requester_id,status,attempts,lease_until,job_kind,explicit_mention)
     values(m,current_setting('pal.test.group')::uuid,'10000000-0000-4000-8000-000000000001','running',1,now()+interval '5 minutes','weekly',false);
+  insert into public.messages(group_id,role,body,source_key) values(current_setting('pal.test.group')::uuid,'system','Internal scheduling marker','weekly:push-regression') returning id into m;
+  assert not exists(select 1 from private.push_outbox where message_id=m),'Internal weekly marker never creates APNs outbox';
+  insert into public.messages(group_id,role,body,source_key,card)
+  values(current_setting('pal.test.group')::uuid,'pal','Choose a time','card:push-routing',jsonb_build_object('type','availability','entity_id',current_setting('pal.test.poll'))) returning id into routed;
+  assert (select count(*)=2 from private.push_outbox where message_id=routed and payload->>'type'='availability' and payload->>'entity_id'=current_setting('pal.test.poll')),'Card pushes persist exact type and entity route for both members';
 end $$;
 set local role authenticated;
 select public.pal_action(current_setting('pal.test.group')::uuid,'group.settings','{"proactive_suggestions":false}');
@@ -192,6 +202,49 @@ begin
   assert not has_function_privilege('anon','public.pal_action(uuid,text,jsonb)','execute'),'Signed-out clients cannot perform actions';
 end $$;
 set local role authenticated;
+select set_config('pal.test.time_poll',(public.pal_action(current_setting('pal.test.group')::uuid,'poll.create',jsonb_build_object('kind','time','question','Which time works?','options',jsonb_build_array(jsonb_build_object('id','fri','label','Friday','starts_at',now()+interval '2 days'),jsonb_build_object('id','sat','label','Saturday','starts_at',now()+interval '3 days')),'deadline_at',now()+interval '1 hour','source_key','time-decline-regression')))->>'id',true);
+select public.pal_action(current_setting('pal.test.group')::uuid,'poll.vote',jsonb_build_object('id',current_setting('pal.test.time_poll'),'option_ids','[]'::jsonb));
+do $$
+declare state jsonb;
+begin
+  assert (select cardinality(option_ids)=0 from public.poll_responses where poll_id=current_setting('pal.test.time_poll')::uuid and user_id=auth.uid()),'Empty time choice is a persisted explicit response';
+  select p into state from jsonb_array_elements(public.pal_group_state(current_setting('pal.test.group')::uuid)->'polls') p where p->>'id'=current_setting('pal.test.time_poll');
+  assert state->'responses'=jsonb_build_array(jsonb_build_object('user_id',auth.uid(),'option_ids','[]'::jsonb)),'State distinguishes explicit decline from absent response';
+  assert state->'votes'='[]'::jsonb,'Empty response does not invent a selected time';
+  assert not exists(select 1 from jsonb_array_elements(state->'responses') r where r->>'user_id'='10000000-0000-4000-8000-000000000002'),'Member who has not answered remains unknown';
+  begin
+    perform public.pal_action(current_setting('pal.test.group')::uuid,'poll.vote',jsonb_build_object('id',current_setting('pal.test.poll'),'option_ids','[]'::jsonb));
+    raise exception 'Expected empty place vote rejection';
+  exception when invalid_parameter_value then null;
+  end;
+  begin
+    perform public.pal_action(current_setting('pal.test.group')::uuid,'poll.vote',jsonb_build_object('id',current_setting('pal.test.time_poll')));
+    raise exception 'Expected omitted time choice rejection';
+  exception when invalid_parameter_value then null;
+  end;
+end $$;
+reset role;
+do $$
+begin
+  -- Fixture clock is awake in this IANA zone regardless of when the suite runs.
+  update public.groups set timezone=(select name from pg_timezone_names where extract(hour from now() at time zone name)=12 order by name limit 1) where id=current_setting('pal.test.group')::uuid;
+  update public.reminders set due_at=now()-interval '1 second' where poll_id=current_setting('pal.test.time_poll')::uuid and kind='poll_halfway';
+end $$;
+set local role service_role;
+select public.pal_maintenance();
+do $$
+begin
+  assert (select count(*)=1 from private.push_outbox where payload->>'poll_id'=current_setting('pal.test.time_poll') and payload ? 'reminder_id' and user_id='10000000-0000-4000-8000-000000000002'),'Halfway nudge targets only the unanswered member';
+  assert not exists(select 1 from private.push_outbox where payload->>'poll_id'=current_setting('pal.test.time_poll') and payload ? 'reminder_id' and user_id='10000000-0000-4000-8000-000000000001'),'Explicit decline excludes member from nudges';
+end $$;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000002',true);
+select public.pal_action(current_setting('pal.test.group')::uuid,'poll.vote',jsonb_build_object('id',current_setting('pal.test.time_poll'),'option_ids','[]'::jsonb));
+do $$
+begin
+  assert (select count(*)=2 from public.poll_responses where poll_id=current_setting('pal.test.time_poll')::uuid and cardinality(option_ids)=0),'Both members can explicitly decline all times';
+  assert not exists(select 1 from public.reminders where poll_id=current_setting('pal.test.time_poll')::uuid and status='scheduled'),'All members responding cancels remaining deadline nudge';
+end $$;
 select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000003',true);
 do $$
 begin

@@ -31,15 +31,19 @@ export function batchSpeaker(batch: SourceMessage[], messageId: string) {
   return source;
 }
 
+export function actionSourceKey(jobId: string, action: keyof typeof actionSchemas, identity: string) {
+  const digest = createHash("sha256").update(identity).digest("hex").slice(0, 32);
+  return `job:${jobId}:${action}:${digest}`;
+}
+
 export async function agentAction(context: Parameters<typeof scopeId>[0], action: keyof typeof actionSchemas,
   data: Record<string, unknown>, identity: string, sourceMessageId?: string) {
   const { job, db, batch } = await jobScope(scopeId(context));
   const source = sourceMessageId ? batchSpeaker(batch, sourceMessageId) : undefined;
   const parsed = parseAgentAction(action, data);
-  const digest = createHash("sha256").update(identity).digest("hex").slice(0, 32);
   return checked(await db.rpc("pal_agent_action", {
     p_group_id: job.group_id, p_requester_id: source?.sender_id ?? job.requester_id, p_action: action,
-    p_data: { ...parsed, job_id: job.id, source_key: `job:${job.id}:${action}:${digest}` },
+    p_data: { ...parsed, job_id: job.id, source_key: actionSourceKey(job.id, action, identity) },
   }));
 }
 

@@ -92,7 +92,7 @@ export async function runSocialInspection() {
       }
       checked(await db.from("sources").update({ extraction: { metadata, places: result.candidates } }).eq("id", source.id).eq("attempts", source.attempts));
       const candidates = await Promise.all(result.candidates.map(async candidate => {
-        const query = [candidate.name, candidate.address || candidate.city].filter(Boolean).join(" ").slice(0, 200);
+        const query = [candidate.name, candidate.city || candidate.address].filter(Boolean).join(" ").slice(0, 200);
         const options = await resolvePlace(query).catch(() => []);
         return { ...candidate, options };
       }));

@@ -1,6 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { agentAction, batchSpeaker, jobScope, scopeId } from "../../lib/job-scope";
+import { actionSourceKey, agentAction, batchSpeaker, jobScope, scopeId } from "../../lib/job-scope";
 import { id, timezone, validateReminder } from "../../lib/validation";
 
 export default defineTool({
@@ -15,7 +15,8 @@ export default defineTool({
     const source = batchSpeaker(batch, source_message_id);
     if (!/remind|提醒/i.test(source.body)) throw new Error("This speaker did not ask for a reminder.");
     const existing = await db.from("reminders").select("id").eq("group_id", job.group_id)
-      .eq("requester_id", source.sender_id).eq("body", input.body).eq("due_at", input.due_at).maybeSingle();
+      .eq("requester_id", source.sender_id)
+      .eq("source_key", actionSourceKey(job.id, "reminder.create", `reminder:${source.id}`)).maybeSingle();
     if (existing.error) throw new Error(existing.error.message);
     if (!existing.data) validateReminder(input.due_at, input.timezone);
     return agentAction(context, "reminder.create", input, `reminder:${source.id}`, source_message_id);

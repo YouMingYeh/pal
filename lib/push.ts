@@ -6,7 +6,11 @@ import { integrationUpdate, retryAt } from "./integration-store";
 type Device = { id: string; token: string; environment: "sandbox" | "production"; updated_at: string };
 export type PushItem = {
   id: string; group_id: string; message_id: string | null; plan_id: string | null; attempts: number;
-  payload: { title?: string; body?: string; type?: string; entity_id?: string; reminder_id?: string; poll_id?: string };
+  payload: {
+    aps?: { alert?: { title?: string; body?: string } };
+    title?: string; body?: string; type?: string | null; entity_id?: string | null;
+    plan_id?: string | null; reminder_id?: string | null; poll_id?: string | null;
+  };
   devices: Device[];
 };
 type PushResult = { status: number; reason?: string; timestamp?: number };
@@ -40,12 +44,15 @@ function providerToken(environment: Device["environment"]) {
 }
 
 export function pushPayload(item: PushItem) {
-  const entity = item.payload.entity_id || item.plan_id || item.payload.reminder_id || item.payload.poll_id;
-  const type = item.payload.type || (item.plan_id ? "plan" : item.payload.poll_id ? "choice" : "reminder");
+  const data = item.payload;
+  const planId = item.plan_id || data.plan_id;
+  const entity = data.entity_id || data.poll_id || planId || data.reminder_id;
+  const type = data.type || (data.poll_id ? "choice" : planId ? "plan" : data.reminder_id ? "reminder" : "message");
+  const alert = data.aps?.alert;
   return {
-    aps: { alert: { title: (item.payload.title || "Pal").slice(0, 100), body: (item.payload.body || "New message in your group.").slice(0, 500) }, sound: "default", "thread-id": item.group_id },
+    aps: { alert: { title: (alert?.title || data.title || "Pal").slice(0, 100), body: (alert?.body || data.body || "New message in your group.").slice(0, 500) }, sound: "default", "thread-id": item.group_id },
     group_id: item.group_id, message_id: item.message_id, ...(entity ? { entity_id: entity } : {}), type,
-    ...(item.plan_id ? { plan_id: item.plan_id } : {}),
+    ...(planId ? { plan_id: planId } : {}),
   };
 }
 

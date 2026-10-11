@@ -26,4 +26,6 @@ Use Node 24 and npm ci. Configure the ignored root .env using .env.example, then
 
 Run npm test, npm run typecheck, and npm run build. npm run smoke:v1 exercises the deployed v1 flow using ignored demo identities; it creates isolated groups and checks real Eve completion plus closed-client reminder delivery. The historical smoke script targets the original spike. Native build/tests and physical-device setup are in ios/README.md. Migrations and PostgreSQL assertions are in supabase/README.md.
 
+On 2026-10-11, the deployed flow inspected the supplied Instagram reel, extracted Tur and five dishes with timestamp evidence, and resolved Tur at 1 W Portal Ave through Apple Maps. A physical iPhone received a server reminder after Pal was terminated; the user confirmed its tap opened the reminder card. Google consent and event creation remain a separate live check; Google's test-mode warning and token lifetime apply until production verification.
+
 Member location sharing, automatic bookings, two-way calendar sync, games, image generation, and a personal feed are deferred. Social providers may reject private or inaccessible videos; the original link and manual correction remain available.

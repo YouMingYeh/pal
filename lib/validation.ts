@@ -56,7 +56,7 @@ export const actionSchemas = {
     options: z.array(pollOption).min(2).max(8), deadline_at: timestamp, ...sourceKey,
   }).strict().refine(value => new Set(value.options.map(option => option.id)).size === value.options.length, "Poll option IDs must be unique.")
     .refine(value => value.kind !== "time" || value.options.every(option => Boolean(option.starts_at)), "Time options need dated start times."),
-  "poll.vote": z.object({ id, option_ids: z.array(z.string().min(1).max(64)).min(1).max(8), ...sourceKey }).strict(),
+  "poll.vote": z.object({ id, option_ids: z.array(z.string().min(1).max(64)).max(8), ...sourceKey }).strict(),
   "plan.create": z.object({ ...planFields, ...sourceKey }).strict().refine(value => !value.ends_at || Date.parse(value.ends_at) > Date.parse(value.starts_at), "Plan must end after it starts."),
   "plan.update": z.object({ id, ...z.object(planFields).partial().shape, ...sourceKey }).strict().refine(value => !value.starts_at || !value.ends_at || Date.parse(value.ends_at) > Date.parse(value.starts_at), "Plan must end after it starts."),
   "plan.confirm": z.object({ id, ...sourceKey }).strict(),
@@ -71,10 +71,11 @@ export const actionSchemas = {
 
 const actionVariants = Object.entries(actionSchemas).map(([action, data]) => z.object({ action: z.literal(action), data }).strict());
 export const actionInput = z.discriminatedUnion("action", actionVariants as [typeof actionVariants[number], ...typeof actionVariants[number][]]);
-export const agentAllowedActions = new Set(["reaction.toggle", "memory.save", "place.save", "source.create", "poll.create", "plan.create", "reminder.create"]);
+export const agentAllowedActions = new Set(["reaction.toggle", "memory.save", "place.save", "place.correct", "source.create", "poll.create", "plan.create", "reminder.create"]);
 
 export function parseAgentAction(action: keyof typeof actionSchemas, data: unknown) {
   if (!agentAllowedActions.has(action)) throw new Error("This action requires a group member.");
+  if (action === "place.correct") return z.object({ id, booking_url: httpUrl }).strict().parse(data);
   return actionSchemas[action].parse(data);
 }
 
