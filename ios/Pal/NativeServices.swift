@@ -5,6 +5,7 @@ import UserNotifications
 
 extension Notification.Name {
     static let palDeviceToken = Notification.Name("PalDeviceToken")
+    static let palDeviceError = Notification.Name("PalDeviceRegistrationError")
     static let palNotificationRoute = Notification.Name("PalNotificationRoute")
 }
 
@@ -18,6 +19,9 @@ final class PalAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationC
         UserDefaults.standard.set(token, forKey: "PalDeviceToken")
         NotificationCenter.default.post(name: .palDeviceToken, object: token)
     }
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NotificationCenter.default.post(name: .palDeviceError, object: error.localizedDescription)
+    }
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         let payload = response.notification.request.content.userInfo
         UserDefaults.standard.set(payload, forKey: "PalPendingNotification")
@@ -30,9 +34,16 @@ final class PalAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationC
 }
 
 enum PalNotifications {
+    @MainActor static func registerIfAuthorized() async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        UserDefaults.standard.set(settings.authorizationStatus.rawValue, forKey: "PalNotificationAuthorization")
+        if [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+    }
     @MainActor static func enable() async throws -> Bool {
         let enabled = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
-        if enabled { UIApplication.shared.registerForRemoteNotifications() }
+        await registerIfAuthorized()
         return enabled
     }
 }
@@ -44,7 +55,7 @@ enum PalNotifications {
         guard url.scheme == "https" else { throw PalFailure(message: "Google Calendar returned an invalid sign-in link.") }
         let callback: URL = try await withCheckedThrowingContinuation { continuation in
             session = ASWebAuthenticationSession(url: url, callbackURLScheme: "pal") { url, error in
-                if let error { continuation.resume(throwing: error) }
+                if let error { continuation.resume(throwing: (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin ? CancellationError() : error) }
                 else if let url { continuation.resume(returning: url) }
                 else { continuation.resume(throwing: PalFailure(message: "Google Calendar did not connect.")) }
             }

@@ -50,7 +50,7 @@ struct PalCardView: View {
     }
     private func cardLabel(_ icon: String, title: String, subtitle: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon).foregroundStyle(.blue).frame(width: 24)
+            Image(systemName: icon).foregroundStyle(PalTheme.ink).frame(width: 24)
             VStack(alignment: .leading, spacing: 5) { Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary); Text(subtitle).font(.caption).foregroundStyle(.secondary) }
         }
     }
@@ -71,7 +71,7 @@ struct PollCardView: View {
                     let votes = poll.votes.filter { $0.optionID == option.id }.count
                     let ownVotes = poll.votes.filter { $0.userID == store.userID }
                     let selected = ownVotes.contains { $0.optionID == option.id }
-                    let locked = busy || poll.status != "open" || (selected && (poll.kind != "time" || ownVotes.count <= 1))
+                    let locked = busy || !poll.canVote() || (selected && (poll.kind != "time" || ownVotes.count <= 1))
                     Button { vote(option, poll: poll, selected: selected) } label: {
                         HStack {
                             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -87,19 +87,30 @@ struct PollCardView: View {
                         .accessibilityValue(selected ? "Selected" : "Not selected")
                         .disabled(locked)
                 }
-                Text(poll.status == "open" ? (poll.kind == "time" ? "Select every time that works for you." : "Choose one option.") : "Voting closed").font(.caption).foregroundStyle(.secondary)
+                if poll.kind == "time" {
+                    let noneSelected = poll.noneWork(for: store.userID)
+                    Button { submit([], poll: poll) } label: { HStack { Image(systemName: noneSelected ? "checkmark.circle.fill" : "circle"); Text("None work"); Spacer() } }
+                        .frame(minHeight: 44).accessibilityValue(noneSelected ? "Selected" : "Not selected").disabled(busy || !poll.canVote() || noneSelected)
+                    let unavailable = poll.responses?.filter { $0.optionIDs.isEmpty }.count ?? 0
+                    if unavailable > 0 { Text("\(unavailable) \(unavailable == 1 ? "person needs" : "people need") another time").font(.caption).foregroundStyle(.secondary) }
+                }
+                Text(poll.canVote() ? (poll.kind == "time" ? "Select every time that works for you." : "Choose one option.") : "Voting closed").font(.caption).foregroundStyle(.secondary)
                 if let deadline = poll.deadlineAt.flatMap(PalDate.date) { Text("Closes \(deadline.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
             } else { ProgressView("Loading vote…") }
-        }.task { if poll == nil { do { try await store.loadState(group) } catch { store.error = error.localizedDescription } } }
+        }.task { if poll == nil { do { try await store.loadState(group) } catch { store.report(error) } } }
     }
     private func vote(_ option: PollOption, poll: GroupPoll, selected: Bool) {
+        var selections = poll.kind == "time" ? poll.votes.filter { $0.userID == store.userID }.map(\.optionID) : []
+        if selected { selections.removeAll { $0 == option.id } } else { selections.append(option.id) }
+        submit(selections, poll: poll)
+    }
+    private func submit(_ selections: [String], poll: GroupPoll) {
+        guard poll.canVote(), !busy else { return }
         busy = true
         Task {
             defer { busy = false }
-            var selections = poll.kind == "time" ? poll.votes.filter { $0.userID == store.userID }.map(\.optionID) : []
-            if selected { selections.removeAll { $0 == option.id } } else { selections.append(option.id) }
             do { try await store.mutate(group, action: "poll.vote", data: ["id": .string(poll.id.uuidString), "option_ids": .array(selections.map(JSONValue.string))]) }
-            catch { store.error = error.localizedDescription }
+            catch { store.report(error) }
         }
     }
 
@@ -151,7 +162,7 @@ struct SourceCardView: View {
         Task {
             defer { busy = false }
             do { try await store.mutate(group, action: "place.save", data: ["source_id": .string(source.id.uuidString), "name": .string(option.name), "address": .string(option.address ?? ""), "latitude": .number(latitude), "longitude": .number(longitude), "provider": .string(option.provider ?? "apple"), "provider_id": .string(providerID)]) }
-            catch { store.error = error.localizedDescription }
+            catch { store.report(error) }
         }
     }
 }

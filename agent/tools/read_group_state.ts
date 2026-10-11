@@ -8,6 +8,8 @@ export default defineTool({
   inputSchema: z.object({}),
   async execute(_input, context) {
     const { db, job } = await jobScope(scopeId(context));
-    return checked(await db.rpc("pal_group_state", { p_group_id: job.group_id }));
+    const state = checked(await db.rpc("pal_group_state", { p_group_id: job.group_id }));
+    state.members = state.members.map(({ avatar_path: _path, ...member }: Record<string, unknown>) => member);
+    return state;
   },
 });

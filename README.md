@@ -10,7 +10,7 @@ Share a restaurant reel or paste a URL. Its source card progresses through inspe
 
 Confirmed plans schedule future 24-hour and 2-hour attendance reminders. Changes reset affected RSVPs and replace superseded reminders and Google event copies. The server posts reminder messages and sends APNs independently of the app. Notification taps open the relevant group card.
 
-Profile contains Google Calendar connection and notification controls. Google uses only the app-created-calendar scope, creates a separate Pal calendar, and receives confirmed plans for members who RSVP Yes. Disconnecting stops updates and revokes credentials; existing Google events remain snapshots. Group details contain editable preferences, availability, proactive suggestions, and personal group muting.
+Profile has a photo picker, editable name, Google Calendar connection and notification controls. Uploaded avatars are decoded, resized and stripped of camera metadata, then stored privately; authenticated group members receive temporary image links. Google uses only the app-created-calendar scope, creates a separate Pal calendar, and receives confirmed plans for members who RSVP Yes. Disconnecting stops updates and revokes credentials; existing Google events remain snapshots. Attending members can also review and save a manual copy through Apple's native Calendar editor. Group details contain editable preferences, availability, proactive suggestions, and personal group muting.
 
 ## Services
 
@@ -26,6 +26,6 @@ Use Node 24 and npm ci. Configure the ignored root .env using .env.example, then
 
 Run npm test, npm run typecheck, and npm run build. npm run smoke:v1 exercises the deployed v1 flow using ignored demo identities; it creates isolated groups and checks real Eve completion plus closed-client reminder delivery. The historical smoke script targets the original spike. Native build/tests and physical-device setup are in ios/README.md. Migrations and PostgreSQL assertions are in supabase/README.md.
 
-On 2026-10-11, the deployed flow inspected the supplied Instagram reel, extracted Tur and five dishes with timestamp evidence, and resolved Tur at 1 W Portal Ave through Apple Maps. A physical iPhone received a server reminder after Pal was terminated; the user confirmed its tap opened the reminder card. Google consent and event creation remain a separate live check; Google's test-mode warning and token lifetime apply until production verification.
+On 2026-10-11, the deployed flow inspected the supplied Instagram reel, extracted Tur and five dishes with timestamp evidence, and resolved Tur at 1 W Portal Ave through Apple Maps. A physical iPhone received a server reminder after Pal was terminated; the user confirmed its tap opened the reminder card. Real Google consent and a member's Yes RSVP created exactly one event in their separate Pal calendar. Google's test-mode warning and token lifetime apply until production verification. The full user-story walkthrough and remaining manual checks are in docs/user-flow-review.md.
 
 Member location sharing, automatic bookings, two-way calendar sync, games, image generation, and a personal feed are deferred. Social providers may reject private or inaccessible videos; the original link and manual correction remain available.

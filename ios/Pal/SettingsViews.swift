@@ -1,61 +1,184 @@
 import SwiftUI
+import UserNotifications
+import UIKit
+import PhotosUI
+import ImageIO
+
+enum PalNotificationPreference {
+    static func isEnabled(_ preference: Bool, authorization: UNAuthorizationStatus?) -> Bool {
+        preference && (authorization == .authorized || authorization == .provisional || authorization == .ephemeral)
+    }
+}
+
+enum PalAvatarImage {
+    static func jpegData(from data: Data) throws -> Data {
+        // Bound the encoded original before decoding a thumbnail.
+        guard !data.isEmpty, data.count <= 30 * 1024 * 1024,
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 1024,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary) else {
+            throw PalFailure(message: "Choose a supported photo smaller than 30 MB.")
+        }
+        let image = UIImage(cgImage: thumbnail)
+        for quality in [0.9, 0.75, 0.55] {
+            if let jpeg = image.jpegData(compressionQuality: quality), jpeg.count <= 2 * 1024 * 1024 { return jpeg }
+        }
+        throw PalFailure(message: "Unable to prepare a photo smaller than 2 MB. Choose a different photo.")
+    }
+}
 
 struct ProfileView: View {
     @EnvironmentObject private var store: PalStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var calendarLink = GoogleCalendarLink()
     @State private var name = ""
-    @State private var avatarURL = ""
-    @State private var notifications = false
+    @State private var originalName = ""
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var avatarData: Data?
+    @State private var avatarPreview: UIImage?
+    @State private var removeAvatar = false
+    @State private var photoTaskID = UUID()
+    @State private var processingPhoto = false
+    @State private var loadingProfile = true
+    @State private var authorization: UNAuthorizationStatus?
     @State private var calendarStatus: CalendarStatus?
+    @State private var calendarIssue: String?
     @State private var busy = false
     @State private var error: String?
-    @State private var permissionDenied = false
     @State private var disconnecting = false
+    @State private var discarding = false
+    private var hasChanges: Bool { name.trimmingCharacters(in: .whitespacesAndNewlines) != originalName || avatarData != nil || removeAvatar }
+    private var validName: Bool {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !value.isEmpty && value.utf16.count <= 60
+    }
 
     var body: some View {
+        let currentAvatarURL = removeAvatar ? nil : store.profile?.avatarURL
         Form {
-            Section("Profile") {
-                TextField("Display name", text: $name).textContentType(.name)
-                TextField("Avatar URL (optional)", text: $avatarURL).keyboardType(.URL)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                Toggle("Notifications", isOn: $notifications)
-                if permissionDenied {
-                    Text("Notifications are disabled in iOS. Enable them in Settings, then save again.")
-                        .font(.footnote).foregroundStyle(.secondary)
+            Section {
+                HStack {
+                    Spacer()
+                    PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                        ZStack(alignment: .bottomTrailing) {
+                            if let avatarPreview {
+                                Image(uiImage: avatarPreview).resizable().scaledToFill()
+                                    .frame(width: 148, height: 148).clipShape(Circle())
+                            } else {
+                                AvatarView(name: name, url: currentAvatarURL, size: 148)
+                            }
+                            Image(systemName: "photo.badge.plus").font(.title3)
+                                .frame(width: 42, height: 42).background(.regularMaterial, in: Circle())
+                        }
+                    }.buttonStyle(.plain).accessibilityLabel("Choose profile photo")
+                    Spacer()
                 }
-                Button("Save profile") { save() }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 60)
+                .padding(.vertical, 24)
+                if processingPhoto { ProgressView("Preparing photo…").frame(maxWidth: .infinity) }
+                if currentAvatarURL != nil || avatarData != nil || processingPhoto {
+                    Button("Remove photo", role: .destructive) { removePhoto() }.frame(maxWidth: .infinity)
+                }
+            }.listRowBackground(Color.clear)
+            Section {
+                HStack {
+                    Text("Name").foregroundStyle(.secondary)
+                    TextField("Your name", text: $name).textContentType(.name).multilineTextAlignment(.trailing)
+                }
+            }
+            Section("Notifications") {
+                if let authorization {
+                    if authorization == .denied {
+                        Text("Notifications are blocked in iOS. Allow them in Settings to receive chat alerts and reminders.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        if let url = URL(string: UIApplication.openNotificationSettingsURLString) { Link("Open notification settings", destination: url) }
+                    } else if authorization == .notDetermined {
+                        Button("Enable notifications") { updateNotifications(true) }.disabled(store.profile == nil)
+                        Text("Receive chat alerts and reminders from Pal.").font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        Toggle("Chat alerts and reminders", isOn: Binding(
+                            get: { PalNotificationPreference.isEnabled(store.profile?.notificationPreferences?.enabled ?? false, authorization: authorization) },
+                            set: { updateNotifications($0) }
+                        )).disabled(store.profile == nil)
+                    }
+                } else { ProgressView("Checking notification permission…") }
+                if let issue = store.pushRegistrationIssue { Text(issue).font(.footnote).foregroundStyle(.red) }
             }
             Section("Google Calendar") {
-                if let status = calendarStatus {
-                    Label(status.connected ? "Connected" : "Not connected", systemImage: status.connected ? "checkmark.circle" : "calendar")
-                    if let issue = status.syncError, !issue.isEmpty { Text(issue).font(.footnote).foregroundStyle(.red) }
+                HStack(spacing: 12) {
+                    Image("GoogleCalendar").renderingMode(.original).resizable().scaledToFit()
+                        .frame(width: 26, height: 26).accessibilityHidden(true)
+                    if let status = calendarStatus { Text(status.connected ? "Connected" : "Not connected") }
+                    else if calendarIssue != nil { Text("Unable to check connection").foregroundStyle(.secondary) }
+                    else { ProgressView("Checking connection…") }
+                }
+                if let issue = calendarStatus?.syncError, !issue.isEmpty { Text(issue).font(.footnote).foregroundStyle(.red) }
+                if let issue = calendarIssue {
+                    Text(issue).font(.footnote).foregroundStyle(.red)
+                    Button("Try again") { Task { await refreshCalendar() } }
                 }
                 if calendarStatus?.connected == true {
                     Button("Disconnect Google Calendar", role: .destructive) { disconnecting = true }
                     Text("Disconnect stops updates. Existing Google events stay in your Pal calendar.")
                         .font(.footnote).foregroundStyle(.secondary)
-                } else {
+                } else if calendarStatus?.connected == false {
                     Button("Connect Google Calendar") { connectCalendar() }
                 }
-                Button("Refresh connection status") { Task { await refreshCalendar() } }
             }
             Section {
                 Button("Sign out", role: .destructive) { Task { await store.logout() } }
             }
             if busy { ProgressView() }
         }
-        .disabled(busy)
-        .navigationTitle("Profile").navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(busy) } }
+        .disabled(busy || loadingProfile)
+        .navigationTitle("Edit Profile").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { if hasChanges { discarding = true } else { dismiss() } }.disabled(busy)
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save profile", systemImage: "checkmark") { save() }.labelStyle(.iconOnly)
+                    .disabled(busy || loadingProfile || processingPhoto || !validName || !hasChanges)
+            }
+        }
+        .interactiveDismissDisabled(busy || hasChanges)
         .task {
             do {
                 try await store.loadProfile()
                 name = store.profile?.displayName ?? ""
-                avatarURL = store.profile?.avatarURL ?? ""
-                notifications = store.profile?.notificationPreferences?.enabled ?? false
-            } catch { self.error = error.localizedDescription }
+                originalName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
+            loadingProfile = false
+            await refreshNotificationAuthorization()
             await refreshCalendar()
+        }
+        .task(id: selectedPhoto) {
+            guard !Task.isCancelled else { return }
+            guard let item = selectedPhoto else { processingPhoto = false; return }
+            let taskID = UUID()
+            photoTaskID = taskID
+            processingPhoto = true
+            defer { if photoTaskID == taskID { processingPhoto = false } }
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else {
+                    throw PalFailure(message: "Unable to read the selected photo.")
+                }
+                let prepared = try await Task.detached(priority: .userInitiated) { try PalAvatarImage.jpegData(from: data) }.value
+                try Task.checkCancellation()
+                guard selectedPhoto == item, photoTaskID == taskID else { return }
+                avatarData = prepared
+                avatarPreview = UIImage(data: prepared)
+                removeAvatar = false
+            } catch {
+                if !PalCancellation.isCancellation(error) && selectedPhoto == item && photoTaskID == taskID { self.error = error.localizedDescription }
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await refreshNotificationAuthorization() } }
         }
         .alert("Unable to update profile", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK") { error = nil }
@@ -66,31 +189,70 @@ struct ProfileView: View {
                 Task {
                     defer { busy = false }
                     do { try await store.disconnectCalendar(); await refreshCalendar() }
-                    catch { self.error = error.localizedDescription }
+                    catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
                 }
             }
         } message: { Text("Disconnect stops updates. Existing Google events stay in your Pal calendar.") }
+        .confirmationDialog("Discard profile changes?", isPresented: $discarding, titleVisibility: .visible) {
+            Button("Discard changes", role: .destructive) { dismiss() }
+        }
     }
 
     private func save() {
-        let avatar = avatarURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !avatar.isEmpty {
-            guard let components = URLComponents(string: avatar), ["https", "http"].contains(components.scheme),
-                  components.host != nil, components.user == nil, components.password == nil, avatar.count <= 2048 else {
-                error = "Use an HTTP or HTTPS avatar link without credentials."
-                return
-            }
-        }
+        guard !busy, !processingPhoto, validName else { return }
+        let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         busy = true
         Task {
             defer { busy = false }
             do {
-                let requested = notifications
-                let enabled = requested ? try await PalNotifications.enable() : false
-                notifications = enabled
-                permissionDenied = requested && !enabled
-                try await store.saveProfile(name: name.trimmingCharacters(in: .whitespacesAndNewlines), avatarURL: avatar.isEmpty ? nil : avatar, notifications: enabled)
-            } catch { self.error = error.localizedDescription }
+                if removeAvatar {
+                    _ = try await store.api("/api/profile", method: "PATCH", json: ["display_name": .string(displayName), "avatar_url": .null])
+                    try await store.loadProfile()
+                } else if let avatarData {
+                    try await store.uploadAvatar(data: avatarData, displayName: displayName)
+                } else {
+                    _ = try await store.api("/api/profile", method: "PATCH", json: ["display_name": .string(displayName)])
+                    try await store.loadProfile()
+                }
+                dismiss()
+            } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
+        }
+    }
+
+    private func removePhoto() {
+        guard !busy else { return }
+        photoTaskID = UUID()
+        selectedPhoto = nil
+        processingPhoto = false
+        avatarData = nil
+        avatarPreview = nil
+        removeAvatar = store.profile?.avatarURL != nil
+    }
+
+    private func updateNotifications(_ enabled: Bool) {
+        guard !busy else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let allowed = enabled ? try await PalNotifications.enable() : false
+                authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+                _ = try await store.api("/api/profile", method: "PATCH", json: ["notification_preferences": .object(["enabled": .bool(allowed)])])
+                try await store.loadProfile()
+                // The APNs callback can arrive while the preference request is still in flight.
+                if let token = UserDefaults.standard.string(forKey: "PalDeviceToken") {
+                    if allowed { try await store.registerDevice(token: token) }
+                    else { try await store.unregisterDevice(token: token) }
+                }
+                if allowed { await PalNotifications.registerIfAuthorized() }
+            } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
+        }
+    }
+
+    private func refreshNotificationAuthorization() async {
+        authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        if PalNotificationPreference.isEnabled(store.profile?.notificationPreferences?.enabled ?? false, authorization: authorization) {
+            UIApplication.shared.registerForRemoteNotifications()
         }
     }
 
@@ -99,13 +261,14 @@ struct ProfileView: View {
         Task {
             defer { busy = false }
             do { try await calendarLink.connect(store: store); await refreshCalendar() }
-            catch { self.error = error.localizedDescription }
+            catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
         }
     }
 
     private func refreshCalendar() async {
+        calendarIssue = nil
         do { calendarStatus = try await store.calendarStatus() }
-        catch { self.error = error.localizedDescription }
+        catch { if !PalCancellation.isCancellation(error) { calendarStatus = nil; calendarIssue = error.localizedDescription } }
     }
 }
 
@@ -148,7 +311,8 @@ struct GroupDetailsView: View {
                 Picker("Time zone", selection: $timezone) {
                     ForEach(TimeZone.knownTimeZoneIdentifiers, id: \.self) { Text($0).tag($0) }
                 }
-                Toggle("Pause Pal", isOn: $paused)
+                Toggle("Pause Pal replies", isOn: $paused)
+                Text("Reminders and saved-link processing continue while replies are paused.").font(.footnote).foregroundStyle(.secondary)
                 Toggle("Proactive suggestions", isOn: $proactive)
                 Button("Save group settings") { saveSettings() }
                     .disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80)
@@ -158,6 +322,11 @@ struct GroupDetailsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(memory.key).font(.headline)
                         Text(memory.value)
+                        if let member = state.members.first(where: { $0.userID == memory.userID }) {
+                            Text(member.displayName.map { "From \($0)" } ?? "From a group member").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text("Member unavailable").font(.caption).foregroundStyle(.secondary)
+                        }
                         Text(memory.kind.capitalized).font(.caption).foregroundStyle(.secondary)
                         if let expiry = memory.expiresAt.flatMap(PalDate.date) {
                             Text("Expires \(expiry.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
@@ -198,7 +367,7 @@ struct GroupDetailsView: View {
                 Task {
                     defer { busy = false; deletingMemory = nil }
                     do { try await store.mutate(group, action: "memory.delete", data: ["id": .string(memory.id.uuidString)]) }
-                    catch { self.error = error.localizedDescription }
+                    catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
                 }
             }
         }
@@ -214,7 +383,7 @@ struct GroupDetailsView: View {
                 proactive = state.settings?.proactiveSuggestions ?? false
                 initialized = true
             }
-        } catch { self.error = error.localizedDescription }
+        } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
     }
 
     private func saveSettings() {
@@ -225,7 +394,7 @@ struct GroupDetailsView: View {
                 try await store.mutate(group, action: "group.settings", data: ["name": .string(name.trimmingCharacters(in: .whitespacesAndNewlines)),
                     "timezone": .string(timezone), "agent_paused": .bool(paused), "proactive_suggestions": .bool(proactive)])
                 try await store.loadGroups()
-            } catch { self.error = error.localizedDescription }
+            } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
         }
     }
 }
@@ -264,7 +433,7 @@ struct MemoryEditor: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { save() }.disabled(busy || !ownSource || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || key.count > 100 || value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || value.count > 1000 || (kind == "availability" && expiry <= Date()))
+                Button("Save") { save() }.disabled(busy || !ownSource || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || key.count > 80 || value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || value.count > 1000 || (kind == "availability" && expiry <= Date()))
             }
         }
         .onAppear {
@@ -286,7 +455,7 @@ struct MemoryEditor: View {
                 if let sourceMessage { data["source_message_id"] = .string(sourceMessage.id.uuidString) }
                 try await store.mutate(group, action: "memory.save", data: data)
                 dismiss()
-            } catch { self.error = error.localizedDescription }
+            } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
         }
     }
 }
@@ -362,7 +531,7 @@ private struct PollEditor: View {
                 try await store.mutate(group, action: "poll.create", data: ["kind": .string(kind), "question": .string(question.trimmingCharacters(in: .whitespacesAndNewlines)),
                     "options": .array(options), "deadline_at": .string(PalDate.iso(deadline)), "source_key": .string(sourceKey)])
                 dismiss()
-            } catch { self.error = error.localizedDescription }
+            } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
         }
     }
 }

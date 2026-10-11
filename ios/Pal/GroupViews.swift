@@ -10,33 +10,39 @@ struct GroupMapView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("View", selection: $mode) {
-                Text("Map").tag(0)
-                Text("Saved").tag(1)
-            }.pickerStyle(.segmented).padding()
-            if mode == 0 {
+            if !places.isEmpty {
+                Picker("View", selection: $mode) {
+                    Text("Map").tag(0)
+                    Text("Saved").tag(1)
+                }.pickerStyle(.segmented).padding()
+            }
+            if places.isEmpty {
+                VStack(spacing: 16) {
+                    Image("DoodlePlaces").renderingMode(.template).resizable().scaledToFit()
+                        .frame(width: 100, height: 100).foregroundStyle(.secondary).accessibilityHidden(true)
+                    Text("Your shared places").font(.title3.weight(.semibold))
+                    Text("Save a place from chat, or find one here.").foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("Find a place") { searching = true }.buttonStyle(.borderedProminent)
+                }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if mode == 0 {
                 Map {
                     ForEach(places.filter { $0.latitude != nil && $0.longitude != nil && $0.status == "resolved" }) { place in
                         Annotation(place.name, coordinate: CLLocationCoordinate2D(latitude: place.latitude!, longitude: place.longitude!)) {
                             NavigationLink { PlaceDetailView(group: group, place: place) } label: {
-                                Image(systemName: "mappin.circle.fill").font(.title).foregroundStyle(.blue)
+                                Image(systemName: "mappin.circle.fill").font(.title).foregroundStyle(PalTheme.ink)
                                     .background(.background, in: Circle())
                             }.accessibilityLabel(place.name)
                         }
                     }
                 }.mapControls { MapCompass(); MapScaleView() }
-                if places.isEmpty { Text("Save a place to start your group’s map.").font(.footnote).foregroundStyle(.secondary).padding() }
             } else {
                 List {
-                    if places.isEmpty {
-                        ContentUnavailableView("No saved places", systemImage: "mappin.and.ellipse", description: Text("Search for a restaurant or save a place from your chat."))
-                    }
                     ForEach(places) { place in
                         NavigationLink { PlaceDetailView(group: group, place: place) } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(place.name).font(.headline)
                                 if let address = place.address { Text(address).font(.subheadline).foregroundStyle(.secondary) }
-                                if place.status != "resolved" { Label("Check this place", systemImage: "questionmark.circle").font(.caption).foregroundStyle(.orange) }
+                                if place.status != "resolved" { Label("Check this place", systemImage: "questionmark.circle").font(.caption).foregroundStyle(.secondary) }
                             }
                         }
                     }
@@ -46,7 +52,7 @@ struct GroupMapView: View {
         .navigationTitle("Map").navigationBarTitleDisplayMode(.inline)
         .toolbar { Button("Add place", systemImage: "plus") { searching = true } }
         .sheet(isPresented: $searching) { NavigationStack { PlaceSearchView(group: group) } }
-        .task { do { try await store.loadState(group) } catch { store.error = error.localizedDescription } }
+        .task { do { try await store.loadState(group) } catch { store.report(error) } }
     }
 }
 
@@ -118,7 +124,7 @@ struct PlaceSearchView: View {
                 items = try JSONDecoder().decode(Response.self, from: data).places
                 searched = true
             } catch is CancellationError {} catch {
-                if !Task.isCancelled { store.error = error.localizedDescription }
+                if !Task.isCancelled { store.report(error) }
             }
         }
     }
@@ -136,7 +142,7 @@ struct PlaceSearchView: View {
                 if let website = item.website { data["website"] = .string(website) }
                 try await store.mutate(group, action: correctingID == nil ? "place.save" : "place.correct", data: data)
                 dismiss()
-            } catch { store.error = error.localizedDescription }
+            } catch { store.report(error) }
         }
     }
 }
@@ -206,7 +212,7 @@ struct PlaceDetailView: View {
         Task {
             defer { busy = false }
             do { try await store.mutate(group, action: action, data: data); if close { dismiss() } }
-            catch { store.error = error.localizedDescription }
+            catch { store.report(error) }
         }
     }
 }
@@ -232,18 +238,18 @@ struct GroupCalendarView: View {
     }
     private func onDay(_ date: String?) -> Bool { date.flatMap(PalDate.date).map { Calendar.current.isDate($0, inSameDayAs: selected) } ?? false }
     private func hasEvents(_ date: Date) -> Bool {
-        state.plans.contains { $0.startsAt.flatMap(PalDate.date).map { Calendar.current.isDate($0, inSameDayAs: date) } ?? false }
-            || state.reminders.contains { PalDate.date($0.dueAt).map { Calendar.current.isDate($0, inSameDayAs: date) } ?? false }
+        state.plans.contains { $0.status != "cancelled" && $0.startsAt.flatMap(PalDate.date).map { Calendar.current.isDate($0, inSameDayAs: date) } ?? false }
+            || state.reminders.contains { $0.status != "cancelled" && PalDate.date($0.dueAt).map { Calendar.current.isDate($0, inSameDayAs: date) } ?? false }
     }
     var body: some View {
         List {
             Section {
                 HStack {
-                    Button("Previous month", systemImage: "chevron.left") { moveMonth(-1) }.labelStyle(.iconOnly)
+                    Button("Previous month", systemImage: "chevron.left") { moveMonth(-1) }.labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                     Spacer()
                     Text(month.formatted(.dateTime.month(.wide).year())).font(.headline)
                     Spacer()
-                    Button("Next month", systemImage: "chevron.right") { moveMonth(1) }.labelStyle(.iconOnly)
+                    Button("Next month", systemImage: "chevron.right") { moveMonth(1) }.labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 8) {
                     ForEach(weekdays.indices, id: \.self) { index in Text(weekdays[index]).font(.caption).foregroundStyle(.secondary) }
@@ -253,10 +259,10 @@ struct GroupCalendarView: View {
                             Button { selected = date } label: {
                                 VStack(spacing: 3) {
                                     Text("\(Calendar.current.component(.day, from: date))").font(.body)
-                                    Circle().fill(hasEvents(date) ? (active ? Color.white : .blue) : .clear).frame(width: 4, height: 4)
+                                    Circle().fill(hasEvents(date) ? (active ? PalTheme.onInk : PalTheme.ink) : .clear).frame(width: 4, height: 4)
                                 }.frame(maxWidth: .infinity).padding(.vertical, 5)
-                                    .foregroundStyle(active ? .white : .primary)
-                                    .background(active ? Color.blue : .clear, in: RoundedRectangle(cornerRadius: 10))
+                                    .foregroundStyle(active ? PalTheme.onInk : PalTheme.ink)
+                                    .background(active ? PalTheme.ink : .clear, in: RoundedRectangle(cornerRadius: 10))
                             }.buttonStyle(.plain).accessibilityLabel(date.formatted(date: .complete, time: .omitted))
                                 .accessibilityAddTraits(active ? .isSelected : [])
                         } else { Color.clear.frame(height: 38) }
@@ -264,20 +270,30 @@ struct GroupCalendarView: View {
                 }
             }
             Section(selected.formatted(date: .abbreviated, time: .omitted)) {
-                let plans = state.plans.filter { onDay($0.startsAt) }
-                let reminders = state.reminders.filter { onDay($0.dueAt) }
-                if plans.isEmpty && reminders.isEmpty { Text("Nothing planned for this day.").foregroundStyle(.secondary) }
+                let plans = state.plans.filter { $0.status != "cancelled" && onDay($0.startsAt) }
+                let reminders = state.reminders.filter { $0.status != "cancelled" && onDay($0.dueAt) }
+                if plans.isEmpty && reminders.isEmpty {
+                    VStack(spacing: 10) {
+                        Image("DoodleCalendar").renderingMode(.template).resizable().scaledToFit()
+                            .frame(width: 64, height: 64).foregroundStyle(.secondary).accessibilityHidden(true)
+                        Text("Nothing planned for this day.").foregroundStyle(.secondary)
+                        if state.plans.isEmpty && state.reminders.isEmpty { Button("Create a plan") { addingPlan = true } }
+                    }.frame(maxWidth: .infinity).padding(.vertical, 12)
+                }
                 ForEach(plans) { plan in planLink(plan) }
                 ForEach(reminders) { reminderLink($0) }
             }
-            Section("Upcoming") {
-                let plans = state.plans.filter { $0.status != "cancelled" && ($0.startsAt.flatMap(PalDate.date) ?? .distantFuture) >= Calendar.current.startOfDay(for: Date()) }
-                if plans.isEmpty { Text("No upcoming plans.").foregroundStyle(.secondary) }
-                ForEach(plans.sorted { ($0.startsAt.flatMap(PalDate.date) ?? .distantFuture) < ($1.startsAt.flatMap(PalDate.date) ?? .distantFuture) }) { plan in planLink(plan) }
-                ForEach(state.reminders.filter { $0.status == "scheduled" }.sorted { (PalDate.date($0.dueAt) ?? .distantFuture) < (PalDate.date($1.dueAt) ?? .distantFuture) }) { reminderLink($0) }
+            let upcoming = state.plans.filter { $0.status != "cancelled" && ($0.startsAt.flatMap(PalDate.date) ?? .distantFuture) >= Calendar.current.startOfDay(for: Date()) }
+            let scheduled = state.reminders.filter { $0.status == "scheduled" }
+            if !upcoming.isEmpty || !scheduled.isEmpty {
+                Section("Upcoming") {
+                    ForEach(upcoming.sorted { ($0.startsAt.flatMap(PalDate.date) ?? .distantFuture) < ($1.startsAt.flatMap(PalDate.date) ?? .distantFuture) }) { plan in planLink(plan) }
+                    ForEach(scheduled.sorted { (PalDate.date($0.dueAt) ?? .distantFuture) < (PalDate.date($1.dueAt) ?? .distantFuture) }) { reminderLink($0) }
+                }
             }
-            Section("Past and cancelled") {
-                ForEach(state.plans.filter { $0.status == "cancelled" || ($0.startsAt.flatMap(PalDate.date) ?? .distantFuture) < Calendar.current.startOfDay(for: Date()) }) { plan in planLink(plan) }
+            let past = state.plans.filter { $0.status == "cancelled" || ($0.startsAt.flatMap(PalDate.date) ?? .distantFuture) < Calendar.current.startOfDay(for: Date()) }
+            if !past.isEmpty {
+                Section("Past and cancelled") { ForEach(past) { plan in planLink(plan) } }
             }
         }.navigationTitle("Calendar").navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -299,7 +315,7 @@ struct GroupCalendarView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Text(plan.status.capitalized).font(.caption).foregroundStyle(.secondary)
                 }
-            } icon: { Image(systemName: "calendar").foregroundStyle(.blue) }
+            } icon: { Image(systemName: "calendar").foregroundStyle(PalTheme.ink) }
         }
     }
     private func reminderLink(_ reminder: GroupReminder) -> some View {
@@ -310,11 +326,11 @@ struct GroupCalendarView: View {
                     Text(PalDate.date(reminder.dueAt)?.formatted(date: .abbreviated, time: .shortened) ?? reminder.dueAt).font(.caption).foregroundStyle(.secondary)
                     Text(reminder.status.capitalized).font(.caption).foregroundStyle(.secondary)
                 }
-            } icon: { Image(systemName: "bell").foregroundStyle(.orange) }
+            } icon: { Image(systemName: "bell").foregroundStyle(.secondary) }
         }
     }
     private func moveMonth(_ delta: Int) { if let date = Calendar.current.date(byAdding: .month, value: delta, to: month) { month = date } }
-    private func refresh() async { do { try await store.loadState(group) } catch { store.error = error.localizedDescription } }
+    private func refresh() async { do { try await store.loadState(group) } catch { store.report(error) } }
 }
 
 struct PlanDetailView: View {
@@ -325,6 +341,8 @@ struct PlanDetailView: View {
     @State private var busy = false
     @State private var cancelling = false
     @State private var bookingReference = ""
+    @State private var calendarDraft: AppleCalendarDraft?
+    @State private var savedCalendarVersion: Int?
     private var current: GroupPlan { (store.states[group.id] ?? .empty).plans.first { $0.id == plan.id } ?? plan }
     var body: some View {
         List {
@@ -337,6 +355,23 @@ struct PlanDetailView: View {
                     NavigationLink { PlaceDetailView(group: group, place: place) } label: { Label(place.name, systemImage: "mappin.and.ellipse") }
                 }
             }
+                if savedCalendarVersion != nil || (current.status == "confirmed" && current.attendees.contains(where: { $0.userID == store.userID && $0.status == "going" })) {
+                    Section("Apple Calendar") {
+                        if let savedCalendarVersion {
+                            Label("Saved a Calendar copy", systemImage: "checkmark.circle")
+                            if current.status == "cancelled" {
+                                Text("This plan was cancelled. Remove its Calendar copy yourself.").font(.footnote).foregroundStyle(.secondary)
+                            } else if !current.attendees.contains(where: { $0.userID == store.userID && $0.status == "going" }) {
+                                Text("You’re no longer going. Remove its Calendar copy if you don’t need it.").font(.footnote).foregroundStyle(.secondary)
+                            } else if savedCalendarVersion != (current.version ?? 1) {
+                                Text("Plan changed. Update its existing copy in Calendar.").font(.footnote).foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Button("Add to Calendar", systemImage: "calendar.badge.plus", action: reviewCalendarCopy).disabled(busy)
+                        }
+                        Text("Changes in Pal do not update this copy.").font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
             if current.status != "cancelled" {
                 Section("Your RSVP") {
                     ForEach(["going", "maybe", "declined"], id: \.self) { status in
@@ -350,13 +385,22 @@ struct PlanDetailView: View {
                     }
                     Text("\(current.attendees.filter { $0.status == "going" }.count) going").font(.footnote).foregroundStyle(.secondary)
                 }
-                Section("Reservation") {
-                    Text(current.bookingStatus?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Not booked")
-                    if let reference = current.bookingReference { Text(reference).textSelection(.enabled) }
-                    Text("Opening a booking website does not make a reservation. Mark it booked after you receive confirmation.").font(.footnote).foregroundStyle(.secondary)
-                    TextField("Confirmation reference (optional)", text: $bookingReference)
-                    Button("Mark reservation booked") { action("plan.booking", ["status": .string("booked"), "reference": .string(bookingReference)]) }.disabled(busy)
-                    Button("Reservation needed") { action("plan.booking", ["status": .string("needed")]) }.disabled(busy)
+                if current.status == "confirmed" {
+                    Section("Reservation") {
+                        if let place = (store.states[group.id] ?? .empty).places.first(where: { $0.id == current.placeID }) {
+                            if let link = place.bookingURL, let url = URL(string: link), ["https", "http"].contains(url.scheme) {
+                                Link("Book", destination: url)
+                            } else if let link = place.website, let url = URL(string: link), ["https", "http"].contains(url.scheme) {
+                                Link("Visit website", destination: url)
+                            }
+                        }
+                        Text(current.bookingStatus?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Not booked")
+                        if let reference = current.bookingReference { Text(reference).textSelection(.enabled) }
+                        Text("After booking on the website, enter your confirmation reference.").font(.footnote).foregroundStyle(.secondary)
+                        TextField("Confirmation reference (optional)", text: $bookingReference)
+                        Button("Mark reservation booked") { action("plan.booking", ["status": .string("booked"), "reference": .string(bookingReference)]) }.disabled(busy)
+                        Button("Reservation needed") { action("plan.booking", ["status": .string("needed")]) }.disabled(busy)
+                    }
                 }
                 Section {
                     if current.status != "confirmed" { Button("Confirm plan") { action("plan.confirm") }.disabled(busy) }
@@ -365,18 +409,38 @@ struct PlanDetailView: View {
                 }
             }
         }.navigationTitle("Plan").navigationBarTitleDisplayMode(.inline)
-        .onAppear { bookingReference = current.bookingReference ?? "" }
+        .onAppear {
+            bookingReference = current.bookingReference ?? ""
+            if let userID = store.userID {
+                savedCalendarVersion = AppleCalendarReceipt.savedVersion(userID: userID, planID: plan.id)
+            }
+        }
+        .sheet(item: $calendarDraft) { draft in
+            AppleCalendarEditor(draft: draft) { result in
+                if store.userID == draft.userID,
+                   AppleCalendarReceipt.record(action: result, userID: draft.userID, planID: draft.planID, version: draft.version) {
+                    savedCalendarVersion = draft.version
+                }
+                calendarDraft = nil
+            }
+        }
         .sheet(isPresented: $editing) { NavigationStack { PlanEditor(group: group, plan: current) } }
         .confirmationDialog("Cancel this group plan?", isPresented: $cancelling, titleVisibility: .visible) {
             Button("Cancel plan", role: .destructive) { action("plan.cancel") }
         }
+    }
+    private func reviewCalendarCopy() {
+        guard let userID = store.userID, savedCalendarVersion == nil else { return }
+        do {
+            calendarDraft = try AppleCalendarDraft(plan: current, group: group, state: store.states[group.id] ?? .empty, userID: userID)
+        } catch { store.report(error) }
     }
     private func action(_ name: String, _ extra: [String: JSONValue] = [:]) {
         busy = true
         Task {
             defer { busy = false }
             do { try await store.mutate(group, action: name, data: extra.merging(["id": .string(plan.id.uuidString)]) { _, new in new }) }
-            catch { store.error = error.localizedDescription }
+            catch { store.report(error) }
         }
     }
 }
@@ -427,7 +491,7 @@ struct PlanEditor: View {
                 if let plan { data["id"] = .string(plan.id.uuidString) }
                 try await store.mutate(group, action: plan == nil ? "plan.create" : "plan.update", data: data)
                 dismiss()
-            } catch { store.error = error.localizedDescription }
+            } catch { store.report(error) }
         }
     }
 }
@@ -439,53 +503,86 @@ struct ReminderEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var bodyText = ""
     @State private var due = Date().addingTimeInterval(3600)
-    @State private var clientID = UUID()
+    @State private var sourceKey = UUID().uuidString
+    @State private var creationData: [String: JSONValue]?
     @State private var busy = false
     @State private var cancelling = false
-    private var editable: Bool { reminder == nil || reminder?.status == "scheduled" }
+    private var current: GroupReminder? {
+        guard let reminder else { return nil }
+        return (store.states[group.id] ?? .empty).reminders.first { $0.id == reminder.id } ?? reminder
+    }
+    private var editable: Bool {
+        current?.canEdit(userID: store.userID) ?? true
+    }
+    private var valid: Bool {
+        let text = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !text.isEmpty && text.utf16.count <= 2000 && due > Date()
+    }
     var body: some View {
         Form {
-            TextField("What should Pal remind the group?", text: $bodyText, axis: .vertical).lineLimit(2...5).disabled(!editable)
-            DatePicker("Remind at", selection: $due, in: Date()...).disabled(!editable)
-            Text("Time zone: \(TimeZone.current.identifier)").font(.footnote).foregroundStyle(.secondary)
-            if let reminder { Text(reminder.status.capitalized).foregroundStyle(.secondary) }
+            if reminder == nil {
+                Image("DoodleReminder").renderingMode(.template).resizable().scaledToFit()
+                    .frame(height: 64).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                    .accessibilityHidden(true).listRowBackground(Color.clear)
+            }
+            if editable {
+                TextField("What should Pal remind the group?", text: $bodyText, axis: .vertical)
+                    .lineLimit(2...5).disabled(creationData != nil)
+                if bodyText.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count > 2000 {
+                    Text("Use 2,000 characters or fewer.").font(.footnote).foregroundStyle(.red)
+                }
+                DatePicker("Remind at", selection: $due, in: Date()...).disabled(creationData != nil)
+            } else if let current {
+                Text(current.body)
+                LabeledContent("Remind at") {
+                    Text(PalDate.date(current.dueAt)?.formatted(date: .abbreviated, time: .shortened) ?? current.dueAt)
+                }
+            }
+            Text("Time zone: \(current?.timezone ?? TimeZone.current.identifier)").font(.footnote).foregroundStyle(.secondary)
+            if let current {
+                Text(current.status.capitalized).foregroundStyle(.secondary)
+                if (current.kind ?? "reminder") != "reminder" {
+                    Text("This reminder follows its plan or poll. Update that item to change it.").font(.footnote).foregroundStyle(.secondary)
+                } else if current.status == "scheduled" && current.requesterID != store.userID {
+                    Text("Only the person who set this reminder can change it.").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             Text("Pal sends this reminder to the group even when the app is closed.").font(.footnote).foregroundStyle(.secondary)
-            if reminder != nil && editable { Button("Cancel reminder", role: .destructive) { cancelling = true }.disabled(busy) }
-            if busy { ProgressView() }
+            if creationData != nil && !busy { Text("Retry to save this reminder.").font(.footnote).foregroundStyle(.secondary) }
+            if reminder != nil && editable { Button("Cancel reminder", role: .destructive) { cancelling = true } }
+            if busy { ProgressView("Saving…") }
         }.disabled(busy).navigationTitle(reminder == nil ? "New reminder" : "Reminder").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() }.disabled(busy) }
             if editable {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }.disabled(busy || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || due <= Date())
+                    Button(creationData == nil ? "Save" : "Retry") { save() }
+                        .disabled(busy || (creationData == nil && !valid))
                 }
             }
         }
-        .onAppear { if let reminder { bodyText = reminder.body; due = PalDate.date(reminder.dueAt) ?? due } }
-        .onChange(of: bodyText) { _, _ in if !busy { clientID = UUID() } }
-        .onChange(of: due) { _, _ in if !busy { clientID = UUID() } }
+        .onAppear { if let current { bodyText = current.body; due = PalDate.date(current.dueAt) ?? due } }
         .confirmationDialog("Cancel this reminder?", isPresented: $cancelling, titleVisibility: .visible) {
             Button("Cancel reminder", role: .destructive) {
-                guard let reminder else { return }
-                mutate("reminder.cancel", ["id": .string(reminder.id.uuidString)])
+                guard editable, let current else { return }
+                mutate("reminder.cancel", ["id": .string(current.id.uuidString)])
             }
         }
     }
     private func save() {
-        var data: [String: JSONValue] = ["body": .string(bodyText.trimmingCharacters(in: .whitespacesAndNewlines)), "due_at": .string(PalDate.iso(due)), "timezone": .string(TimeZone.current.identifier)]
-        if let reminder { data["id"] = .string(reminder.id.uuidString) }
-        if reminder != nil {
-            mutate("reminder.update", data)
+        guard !busy, editable else { return }
+        if let current {
+            guard valid else { return }
+            mutate("reminder.update", ["id": .string(current.id.uuidString), "body": .string(bodyText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                "due_at": .string(PalDate.iso(due)), "timezone": .string(current.timezone)])
         } else {
-            busy = true
-            Task {
-                defer { busy = false }
-                do {
-                    try await store.send("@Pal remind everyone to \(bodyText.trimmingCharacters(in: .whitespacesAndNewlines)) at \(PalDate.iso(due)), in timezone \(TimeZone.current.identifier).", to: group, clientID: clientID)
-                    try await store.loadState(group)
-                    dismiss()
-                } catch { store.error = error.localizedDescription }
+            if creationData == nil {
+                guard valid else { return }
+                creationData = ["body": .string(bodyText.trimmingCharacters(in: .whitespacesAndNewlines)), "due_at": .string(PalDate.iso(due)),
+                    "timezone": .string(TimeZone.current.identifier), "source_key": .string(sourceKey)]
             }
+            guard let creationData else { return }
+            mutate("reminder.create", creationData)
         }
     }
     private func mutate(_ action: String, _ data: [String: JSONValue]) {
@@ -493,7 +590,7 @@ struct ReminderEditor: View {
         Task {
             defer { busy = false }
             do { try await store.mutate(group, action: action, data: data); dismiss() }
-            catch { store.error = error.localizedDescription }
+            catch { store.report(error) }
         }
     }
 }

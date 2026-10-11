@@ -1,21 +1,60 @@
 import SwiftUI
 import AuthenticationServices
 
+/// Floating controls use native Liquid Glass when available; increased-contrast preferences keep an opaque surface.
+private struct PalGlass: ViewModifier {
+    var cornerRadius: CGFloat
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @ViewBuilder func body(content: Content) -> some View {
+        if reduceTransparency {
+            content.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: cornerRadius)).overlay(RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(Color(uiColor: .separator), lineWidth: 0.5))
+        } else if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: cornerRadius))
+        } else {
+            content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius)).overlay(RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(Color(uiColor: .separator).opacity(0.5), lineWidth: 0.5))
+        }
+    }
+}
+
+private struct ChatScrollEdges: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) { content.scrollEdgeEffectStyle(.soft, for: .all) }
+        else { content }
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var store: PalStore
+    @Environment(\.scenePhase) private var phase
     var body: some View {
         Group { if store.isSignedIn { GroupsView() } else { LoginView() } }
-            .tint(.blue)
+            .tint(PalTheme.ink)
             .onOpenURL { store.handleURL($0) }
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { if let url = $0.webpageURL { store.handleURL(url) } }
             .task(id: store.userID) {
                 guard store.isSignedIn else { return }
                 do { try await store.loadProfile(); try await store.loadGroups(); await store.acceptPendingInvite(); await store.acceptPendingNotification()
+                    if store.profile?.notificationPreferences?.enabled != false { await PalNotifications.registerIfAuthorized() }
                     if store.profile?.notificationPreferences?.enabled != false, let token = UserDefaults.standard.string(forKey: "PalDeviceToken") { try await store.registerDevice(token: token) }
-                } catch is CancellationError {} catch { store.error = error.localizedDescription }
+                } catch { store.report(error) }
+            }
+            .onChange(of: phase) { _, value in
+                if value == .active, store.isSignedIn {
+                    Task {
+                        if store.profile?.notificationPreferences?.enabled != false { await PalNotifications.registerIfAuthorized() }
+                        if store.profile?.notificationPreferences?.enabled != false, let token = UserDefaults.standard.string(forKey: "PalDeviceToken") {
+                            do { try await store.registerDevice(token: token) }
+                            catch { if !PalCancellation.isCancellation(error) { store.recordPushRegistrationError(error.localizedDescription) } }
+                        }
+                        await store.acceptPendingNotification()
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .palDeviceError)) { event in
+                if let error = event.object as? String { store.recordPushRegistrationError(error) }
             }
             .onReceive(NotificationCenter.default.publisher(for: .palDeviceToken)) { event in
-                if let token = event.object as? String, store.isSignedIn, store.profile?.notificationPreferences?.enabled != false { Task { do { try await store.registerDevice(token: token) } catch { store.error = error.localizedDescription } } }
+                if let token = event.object as? String, store.isSignedIn, store.profile?.notificationPreferences?.enabled != false { Task { do { try await store.registerDevice(token: token) } catch { if !PalCancellation.isCancellation(error) { store.recordPushRegistrationError(error.localizedDescription) } } } }
             }
             .onReceive(NotificationCenter.default.publisher(for: .palNotificationRoute)) { event in
                 if let payload = event.object as? [AnyHashable: Any] { store.handleNotification(payload) }
@@ -32,8 +71,8 @@ struct LoginView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
             Spacer()
-            Image(systemName: "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 54)).foregroundStyle(.blue).accessibilityHidden(true)
+            Image("PalLogo").renderingMode(.original).resizable().scaledToFit()
+                .frame(width: 96, height: 96).accessibilityHidden(true)
             Text("Pal").font(.largeTitle.bold())
             Spacer()
             SignInWithAppleButton(.signIn) { request in
@@ -46,7 +85,7 @@ struct LoginView: View {
                 } catch {
                     nonce = nil
                     isBusy = false
-                    store.error = error.localizedDescription
+                    store.report(error)
                 }
             } onCompletion: { result in
                 switch result {
@@ -64,13 +103,13 @@ struct LoginView: View {
                             try await store.authenticateApple(identityToken: credential.identityToken, nonce: nonce)
                             if let fullName = credential.fullName { try await store.saveAppleName(PersonNameComponentsFormatter().string(from: fullName)) }
                         }
-                        catch { store.error = error.localizedDescription }
+                        catch { store.report(error) }
                     }
                 case .failure(let error):
                     isBusy = false
                     nonce = nil
                     if (error as? ASAuthorizationError)?.code != .canceled {
-                        store.error = error.localizedDescription
+                        store.report(error)
                     }
                 }
             }
@@ -104,7 +143,7 @@ struct GroupsView: View {
                             AvatarView(name: group.name, size: 50)
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack { Text(group.name).font(.headline); Spacer(); if let date = (group.lastMessage?.createdAt).flatMap(PalDate.date) { Text(date, style: .time).font(.caption).foregroundStyle(.secondary) } }
-                                HStack { Text(group.lastMessage?.body ?? "Start a conversation").font(.subheadline).foregroundStyle(.secondary).lineLimit(2); Spacer(); if let unread = group.unreadCount, unread > 0 { Text("\(unread)").font(.caption.bold()).foregroundStyle(.white).padding(6).background(.blue, in: Circle()).accessibilityLabel("\(unread) unread messages") } }
+                                HStack { Text(group.lastMessage?.body ?? "Start a conversation").font(.subheadline).foregroundStyle(.secondary).lineLimit(2); Spacer(); if let unread = group.unreadCount, unread > 0 { Text("\(unread)").font(.caption.bold()).foregroundStyle(PalTheme.onInk).padding(6).background(PalTheme.ink, in: Circle()).accessibilityLabel("\(unread) unread messages") } }
                             }
                         }.padding(.vertical, 5)
                     }
@@ -122,9 +161,9 @@ struct GroupsView: View {
                 .sheet(isPresented: $join) { editSheet("Join group", field: "Invite code", value: $code) { try await store.joinGroup(code: code); join = false; code = "" } }
         }
     }
-    private func refresh() async { do { try await store.loadGroups() } catch is CancellationError {} catch { store.error = error.localizedDescription } }
+    private func refresh() async { do { try await store.loadGroups() } catch { store.report(error) } }
     private func editSheet(_ title: String, field: String, value: Binding<String>, work: @escaping () async throws -> Void) -> some View {
-        NavigationStack { Form { TextField(field, text: value).textInputAutocapitalization(.never); Button(title) { busy = true; Task { defer { busy = false }; do { try await work() } catch { store.error = error.localizedDescription } } }.disabled(busy || value.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty); if busy { ProgressView() } }.navigationTitle(title).navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { create = false; join = false }.disabled(busy) } } }
+        NavigationStack { Form { TextField(field, text: value).textInputAutocapitalization(.never); Button(title) { busy = true; Task { defer { busy = false }; do { try await work() } catch { store.report(error) } } }.disabled(busy || value.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty); if busy { ProgressView() } }.navigationTitle(title).navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { create = false; join = false }.disabled(busy) } } }
     }
 }
 
@@ -139,6 +178,10 @@ struct ChatView: View {
     @State private var details = false
     @State private var calendar = false
     @State private var map = false
+    @State private var newReminder = false
+    @State private var newPlan = false
+    @State private var findPlace = false
+    @State private var newMemory = false
     @State private var routeCard: MessageCard?
     @State private var pollingError: String?
     @State private var lastRead: UUID?
@@ -147,37 +190,23 @@ struct ChatView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 9) {
-                    if messages.isEmpty { Text("Mention @Pal to ask a question or set a reminder.").font(.subheadline).foregroundStyle(.secondary).padding(.top, 28) }
-                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                        if index == 0 || day(message.createdAt) != day(messages[index - 1].createdAt) { Text(PalDate.date(message.createdAt)?.formatted(date: .abbreviated, time: .omitted) ?? "").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.vertical, 10) }
-                        messageRow(message).id(message.id)
-                    }
-                    ForEach(pending) { item in
-                        HStack { Spacer(minLength: 44); VStack(alignment: .trailing, spacing: 4) { Text(item.body).padding(12).foregroundStyle(.white).background(Color.blue.opacity(0.6), in: RoundedRectangle(cornerRadius: 20)); if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(.red).frame(minHeight: 44) } else { Text("Sending…").font(.caption).foregroundStyle(.secondary) } } }.id(item.id)
-                    }
-                }.padding(16)
-            }.defaultScrollAnchor(.bottom).scrollDismissesKeyboard(.interactively)
+                transcript
+            }.defaultScrollAnchor(.bottom).scrollDismissesKeyboard(.interactively).modifier(ChatScrollEdges())
                 .onChange(of: messages.last?.id) { _, id in if let id { proxy.scrollTo(id, anchor: .bottom) } }
-                .safeAreaInset(edge: .bottom) {
-                    VStack(spacing: 5) {
-                        if let pollingError { Text(pollingError).font(.caption).foregroundStyle(.red) }
-                        if let reply { HStack { Text("Reply to \(memberName(reply)): \(reply.body)").font(.caption).lineLimit(1); Spacer(); Button { self.reply = nil } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Cancel reply") }.padding(.horizontal, 20) }
-                        HStack(alignment: .bottom, spacing: 10) {
-                            Menu { Button("Calendar", systemImage: "calendar") { calendar = true }; Button("Saved places", systemImage: "map") { map = true }; Button("Group details", systemImage: "person.2") { details = true } } label: { Image(systemName: "plus").font(.title3).frame(width: 44, height: 44).foregroundStyle(.secondary).background(Color(uiColor: .secondarySystemBackground), in: Circle()) }.accessibilityLabel("Chat actions")
-                            TextField("Message", text: $draft, axis: .vertical).lineLimit(1...5).padding(.horizontal, 14).padding(.vertical, 10).background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 22)).overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Color(uiColor: .separator), lineWidth: 0.5))
-                            Button { let text = draft.trimmingCharacters(in: .whitespacesAndNewlines); let replyID = reply?.id; draft = ""; reply = nil; Task { await store.queue(text, group: group, replyTo: replyID); await refresh() } } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 36)).frame(width: 44, height: 44) }.accessibilityLabel("Send message").disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }.padding(.horizontal, 16).padding(.vertical, 8)
-                    }.background(.bar)
-                }
+                .safeAreaInset(edge: .bottom) { composer }
         }.navigationTitle(group.name).navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .principal) { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, size: 28); Text(group.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.accessibilityLabel("Group details") }
+                ToolbarItem(placement: .principal) { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, size: 28); Text(group.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityLabel("Group details") }
                 ToolbarItem(placement: .topBarTrailing) { HStack { Button { calendar = true } label: { Image(systemName: "calendar") }.accessibilityLabel("Group calendar"); Button { map = true } label: { Image(systemName: "map") }.accessibilityLabel("Saved places") } }
             }
             .sheet(isPresented: $details) { NavigationStack { GroupDetailsView(group: group) } }
-            .sheet(isPresented: $calendar) { NavigationStack { GroupCalendarView(group: group).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { calendar = false } } } } }
-            .sheet(isPresented: $map) { NavigationStack { GroupMapView(group: group).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { map = false } } } } }
+            .navigationDestination(isPresented: $calendar) { GroupCalendarView(group: group) }
+            .navigationDestination(isPresented: $map) { GroupMapView(group: group) }
+            .sheet(isPresented: $newReminder) { NavigationStack { ReminderEditor(group: group) } }
+            .sheet(isPresented: $newPlan) { NavigationStack { PlanEditor(group: group) } }
+            .sheet(isPresented: $findPlace) { NavigationStack { PlaceSearchView(group: group).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { findPlace = false } } } } }
+            .sheet(isPresented: $newMemory) { NavigationStack { MemoryEditor(group: group) } }
             .sheet(item: $remembered) { message in NavigationStack { MemoryEditor(group: group, sourceMessage: message) } }
             .sheet(item: $routeCard) { card in NavigationStack { PalCardView(group: group, card: card).padding().navigationTitle("Details").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { routeCard = nil } } } } }
             .onChange(of: store.requestedEntity) { _, card in if let card { routeCard = card; store.requestedEntity = nil } }
@@ -187,25 +216,67 @@ struct ChatView: View {
                 while !Task.isCancelled { await refresh(); do { try await Task.sleep(for: .seconds(2)) } catch { break } }
             }
     }
-    private func day(_ value: String) -> Date? { PalDate.date(value).map { Calendar.current.startOfDay(for: $0) } }
-    private func memberName(_ message: ChatMessage) -> String { message.role == "pal" ? "Pal" : (state.members.first { $0.userID == message.senderID }?.displayName ?? (message.senderID == store.userID ? "You" : "Member")) }
-    private func messageRow(_ message: ChatMessage) -> some View {
-        let mine = message.senderID == store.userID && message.role == "user"
-        return HStack(alignment: .bottom, spacing: 7) {
-            if mine { Spacer(minLength: 44) } else { AvatarView(name: memberName(message), url: state.members.first { $0.userID == message.senderID }?.avatarURL, size: 26) }
-            VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
-                if !mine { Text(memberName(message)).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8) }
-                if let replyID = message.replyToID, let original = messages.first(where: { $0.id == replyID }) { Text("\(memberName(original)): \(original.body)").font(.caption).lineLimit(2).foregroundStyle(.secondary).padding(8).background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10)) }
-                Text(message.body).textSelection(.enabled).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? Color.white : Color.primary).background(mine ? Color.blue : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-                    .contextMenu { Button("Reply", systemImage: "arrowshape.turn.up.left") { reply = message }; ForEach(["❤️", "👍", "😂", "👀"], id: \.self) { emoji in Button(emoji) { Task { do { try await store.mutate(group, action: "reaction.toggle", data: ["message_id": .string(message.id.uuidString), "emoji": .string(emoji)]) } catch { store.error = error.localizedDescription } } } }; if mine { Button("Remember", systemImage: "bookmark") { remembered = message } } }
-                ForEach(message.cards) { PalCardView(group: group, card: $0) }
-                let reactions = state.reactions.filter { $0.messageID == message.id }
-                if !reactions.isEmpty { Text(Dictionary(grouping: reactions, by: \.emoji).map { "\($0.key) \($0.value.count)" }.sorted().joined(separator: "  ")).font(.caption).padding(.horizontal, 8) }
-                Text((PalDate.date(message.createdAt)?.formatted(date: .omitted, time: .shortened) ?? "") + (mine ? " · Sent" : "")).font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 7)
+    private var transcript: some View {
+        LazyVStack(spacing: 9) {
+            if messages.isEmpty { VStack(spacing: 12) { Image("PalLogo").renderingMode(.original).resizable().scaledToFit().frame(width: 54, height: 54).accessibilityHidden(true); Text("No messages yet").font(.subheadline).foregroundStyle(.secondary) }.padding(.horizontal, 28).padding(.top, 36) }
+            ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                timelineRow(message, at: index)
             }
-            if !mine { Spacer(minLength: 28) }
+            ForEach(pending) { item in
+                HStack { Spacer(minLength: 44); VStack(alignment: .trailing, spacing: 4) { Text(item.body).padding(12).foregroundStyle(PalTheme.onInk).background(PalTheme.ink.opacity(0.6), in: RoundedRectangle(cornerRadius: 20)); if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(.red).frame(minHeight: 44) } else { Text("Sending…").font(.caption).foregroundStyle(.secondary) } } }.id(item.id)
+            }
+        }.padding(16)
+    }
+    private var composer: some View {
+        VStack(spacing: 5) {
+            if let pollingError { Text(pollingError).font(.caption).foregroundStyle(.red) }
+            if let reply { HStack { Text("Reply to \(memberName(reply)): \(reply.body)").font(.caption).lineLimit(1); Spacer(); Button { self.reply = nil } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Cancel reply") }.padding(.horizontal, 20) }
+            HStack(alignment: .bottom, spacing: 10) {
+                Menu { Button("Set reminder", systemImage: "bell") { newReminder = true }; Button("Make a plan", systemImage: "calendar.badge.plus") { newPlan = true }; Button("Find a place", systemImage: "mappin.and.ellipse") { findPlace = true }; Button("Save a preference", systemImage: "bookmark") { newMemory = true } } label: { Image(systemName: "plus").font(.title3.weight(.medium)).frame(width: 44, height: 44).foregroundStyle(.primary).modifier(PalGlass(cornerRadius: 22)) }.accessibilityLabel("Add to chat")
+                HStack(alignment: .bottom, spacing: 0) {
+                    TextField("Message", text: $draft, axis: .vertical).lineLimit(1...5).padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 12).accessibilityLabel("Message")
+                    Button { sendDraft() } label: { Image(systemName: "arrow.up").font(.body.weight(.semibold)).foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary : PalTheme.onInk).frame(width: 32, height: 32).background(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.clear : PalTheme.ink, in: Circle()).frame(width: 44, height: 44) }.buttonStyle(.plain).accessibilityLabel("Send message").disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }.modifier(PalGlass(cornerRadius: 25))
+            }.padding(.horizontal, 14).padding(.vertical, 8)
         }
     }
+    @ViewBuilder private func timelineRow(_ message: ChatMessage, at index: Int) -> some View {
+        let previous = index > 0 ? messages[index - 1] : nil
+        let newDay = previous.map { day(message.createdAt) != day($0.createdAt) } ?? true
+        if newDay { Text(PalDate.date(message.createdAt)?.formatted(date: .abbreviated, time: .shortened) ?? "").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.vertical, 10) }
+        messageRow(message, showSender: previous.map { !message.follows($0) } ?? true).id(message.id)
+    }
+    private func day(_ value: String) -> Date? { PalDate.date(value).map { Calendar.current.startOfDay(for: $0) } }
+    private func memberName(_ message: ChatMessage) -> String { message.role == "pal" ? "Pal" : (state.members.first { $0.userID == message.senderID }?.displayName ?? (message.senderID == store.userID ? "You" : "Member")) }
+    @ViewBuilder private func messageRow(_ message: ChatMessage, showSender: Bool) -> some View {
+        let mine = message.senderID == store.userID && message.role == "user"
+        if message.role == "system" {
+            Text(message.body).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.horizontal, 18).padding(.vertical, 6)
+            ForEach(message.cards) { PalCardView(group: group, card: $0) }
+        } else { HStack(alignment: .bottom, spacing: 7) {
+            if mine { Spacer(minLength: 44) }
+            VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+                if !mine && showSender { HStack(spacing: 5) { if message.role == "pal" { Image("PalLogo").renderingMode(.original).resizable().scaledToFit().frame(width: 18, height: 18).accessibilityHidden(true) }; Text(memberName(message)).font(.caption).foregroundStyle(.secondary) }.padding(.horizontal, 12).padding(.top, 5) }
+                if let replyID = message.replyToID, let original = messages.first(where: { $0.id == replyID }) { Text("\(memberName(original)): \(original.body)").font(.caption).lineLimit(2).foregroundStyle(.secondary).padding(8).background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10)) }
+                if let body = message.displayedBody(in: state) {
+                    Text(PalText.linked(body)).textSelection(.enabled).tint(mine ? PalTheme.onInk : PalTheme.ink).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+                        .contextMenu { messageMenu(message, mine: mine) }
+                }
+                ForEach(message.cards) { PalCardView(group: group, card: $0).contextMenu { messageMenu(message, mine: mine) } }
+                let reactions = state.reactions.filter { $0.messageID == message.id }
+                if !reactions.isEmpty { HStack(spacing: 4) { ForEach(Array(Set(reactions.map(\.emoji))).sorted(), id: \.self) { emoji in let count = reactions.filter { $0.emoji == emoji }.count; let selected = reactions.contains { $0.emoji == emoji && $0.userID == store.userID }; Button { react(emoji, to: message) } label: { Text("\(emoji) \(count)").font(.caption).padding(.horizontal, 9).padding(.vertical, 5).background(selected ? PalTheme.ink.opacity(0.12) : Color(uiColor: .tertiarySystemFill), in: Capsule()) }.buttonStyle(.plain).frame(minHeight: 44).accessibilityLabel("\(emoji), \(count) reactions").accessibilityValue(selected ? "You reacted" : "").accessibilityHint(selected ? "Remove your reaction" : "Add your reaction") } } }
+            }
+            if !mine { Spacer(minLength: 28) }
+        } }
+    }
+    @ViewBuilder private func messageMenu(_ message: ChatMessage, mine: Bool) -> some View {
+        ControlGroup { ForEach(["❤️", "👍", "😂", "👀"], id: \.self) { emoji in Button { react(emoji, to: message) } label: { Text(emoji) }.accessibilityLabel("React \(emoji)") } }.controlGroupStyle(.palette)
+        Button("Reply", systemImage: "arrowshape.turn.up.left") { reply = message }
+        Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.body }
+        if mine { Button("Save to memory", systemImage: "bookmark") { remembered = message } }
+    }
+    private func sendDraft() { let text = draft.trimmingCharacters(in: .whitespacesAndNewlines); guard !text.isEmpty else { return }; let replyID = reply?.id; draft = ""; reply = nil; Task { await store.queue(text, group: group, replyTo: replyID); await refresh() } }
+    private func react(_ emoji: String, to message: ChatMessage) { Task { do { try await store.mutate(group, action: "reaction.toggle", data: ["message_id": .string(message.id.uuidString), "emoji": .string(emoji)]) } catch { store.report(error) } } }
     private func refresh() async {
         do {
             let loaded = try await store.messages(in: group)
@@ -217,6 +288,6 @@ struct ChatView: View {
                 lastRead = id
             }
             pollingError = nil
-        } catch is CancellationError {} catch { pollingError = error.localizedDescription }
+        } catch { if !PalCancellation.isCancellation(error) { pollingError = error.localizedDescription } }
     }
 }

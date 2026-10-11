@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 indirect enum JSONValue: Codable, Equatable {
     case string(String), number(Double), bool(Bool), array([JSONValue]), object([String: JSONValue]), null
@@ -82,6 +83,48 @@ struct ChatMessage: Decodable, Identifiable {
         replyToID = try c.decodeIfPresent(UUID.self, forKey: .replyToID)
         clientID = try c.decodeIfPresent(UUID.self, forKey: .clientID)
         cards = try c.decodeIfPresent([MessageCard].self, forKey: .cards) ?? []
+    }
+    /// Keep sender labels and delivery times on the edges of a short message run.
+    func follows(_ previous: ChatMessage, calendar: Calendar = .current) -> Bool {
+        guard role != "system", role == previous.role, senderID == previous.senderID,
+              let currentDate = PalDate.date(createdAt), let previousDate = PalDate.date(previous.createdAt) else { return false }
+        let interval = currentDate.timeIntervalSince(previousDate)
+        return calendar.isDate(currentDate, inSameDayAs: previousDate) && (0...180).contains(interval)
+    }
+    func displayedBody(in state: GroupState) -> String? {
+        let value = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ["https", "http"].contains(URL(string: value)?.scheme ?? "") { return body }
+        for card in cards {
+            var title: String?
+            switch card.type {
+            case "plan": title = state.plans.first { $0.id == card.entityID }?.title
+            case "reminder": title = state.reminders.first { $0.id == card.entityID }?.body
+            case "choice", "availability": title = state.polls.first { $0.id == card.entityID }?.question
+            case "place":
+                title = state.places.first { $0.id == card.entityID }?.name
+                if let source = state.sources.first(where: { $0.id == card.entityID || $0.id == card.sourceID }) {
+                    title = title ?? source.title
+                    if ["Finding places...", "Finding places…"].contains(value) { return nil }
+                }
+            default: break
+            }
+            if let title, value == title.trimmingCharacters(in: .whitespacesAndNewlines) { return nil }
+        }
+        return body
+    }
+}
+
+enum PalText {
+    static func linked(_ body: String) -> AttributedString {
+        var result = AttributedString(body)
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return result }
+        for match in detector.matches(in: body, range: NSRange(body.startIndex..., in: body)) {
+            guard let url = match.url, ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
+                  let stringRange = Range(match.range, in: body), let range = Range(stringRange, in: result) else { continue }
+            result[range].link = url
+            result[range].underlineStyle = .single
+        }
+        return result
     }
 }
 struct GroupMember: Decodable, Identifiable {
@@ -172,6 +215,11 @@ struct PollVote: Decodable {
     var optionID: String
     enum CodingKeys: String, CodingKey { case userID = "user_id", optionID = "option_id" }
 }
+struct PollResponse: Decodable {
+    var userID: UUID
+    var optionIDs: [String]
+    enum CodingKeys: String, CodingKey { case userID = "user_id", optionIDs = "option_ids" }
+}
 struct GroupPoll: Decodable, Identifiable {
     var id: UUID
     var kind: String
@@ -180,7 +228,18 @@ struct GroupPoll: Decodable, Identifiable {
     var status: String
     var deadlineAt: String?
     var votes: [PollVote]
-    enum CodingKeys: String, CodingKey { case id,kind,question,options,status,votes; case deadlineAt = "deadline_at" }
+    var responses: [PollResponse]?
+    func canVote(now: Date = Date()) -> Bool {
+        guard status == "open" else { return false }
+        guard let deadlineAt else { return true }
+        guard let deadline = PalDate.date(deadlineAt) else { return false }
+        return deadline > now
+    }
+    func noneWork(for userID: UUID?) -> Bool {
+        guard kind == "time", let userID else { return false }
+        return responses?.contains { $0.userID == userID && $0.optionIDs.isEmpty } == true
+    }
+    enum CodingKeys: String, CodingKey { case id,kind,question,options,status,votes,responses; case deadlineAt = "deadline_at" }
 }
 struct PlanAttendee: Decodable {
     var userID: UUID
@@ -197,8 +256,9 @@ struct GroupPlan: Decodable, Identifiable {
     var notes: String?
     var bookingStatus: String?
     var bookingReference: String?
+    var version: Int?
     var attendees: [PlanAttendee]
-    enum CodingKeys: String, CodingKey { case id,title,status,notes,attendees; case startsAt = "starts_at", endsAt = "ends_at", placeID = "place_id", bookingStatus = "booking_status", bookingReference = "booking_reference" }
+    enum CodingKeys: String, CodingKey { case id,title,status,notes,attendees,version; case startsAt = "starts_at", endsAt = "ends_at", placeID = "place_id", bookingStatus = "booking_status", bookingReference = "booking_reference" }
 }
 struct GroupMemory: Decodable, Identifiable {
     var id: UUID
@@ -219,7 +279,10 @@ struct GroupReminder: Decodable, Identifiable {
     var planID: UUID?
     var pollID: UUID?
     var targetUserIDs: [UUID]?
-    enum CodingKeys: String, CodingKey { case id,body,timezone,status; case dueAt = "due_at", planID = "plan_id", pollID = "poll_id", targetUserIDs = "target_user_ids" }
+    var requesterID: UUID?
+    var kind: String?
+    func canEdit(userID: UUID?) -> Bool { userID != nil && requesterID == userID && (kind ?? "reminder") == "reminder" && status == "scheduled" }
+    enum CodingKeys: String, CodingKey { case id,body,timezone,status,kind; case dueAt = "due_at", planID = "plan_id", pollID = "poll_id", targetUserIDs = "target_user_ids", requesterID = "requester_id" }
 }
 struct MessageReaction: Decodable {
     var messageID: UUID
@@ -268,4 +331,13 @@ struct OutgoingMessage: Codable, Identifiable {
     var replyToID: UUID?
     var failed: Bool
     var id: UUID { clientID }
+}
+
+/// Navigation cancels URLSession with URLError rather than Swift CancellationError.
+enum PalCancellation {
+    static func isCancellation(_ error: Error, taskCancelled: Bool = Task<Never, Never>.isCancelled) -> Bool {
+        if taskCancelled || error is CancellationError { return true }
+        let value = error as NSError
+        return value.domain == NSURLErrorDomain && value.code == NSURLErrorCancelled
+    }
 }

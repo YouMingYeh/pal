@@ -7,7 +7,7 @@ final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         guard let extensionContext else { return }
-        let host = UIHostingController(rootView: ShareView(context: extensionContext))
+        let host = UIHostingController(rootView: ShareView(context: extensionContext).tint(PalTheme.ink))
         addChild(host)
         host.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(host.view)
@@ -114,7 +114,7 @@ private struct ShareView: View {
             try await store.loadGroups()
             if groupID == nil { groupID = store.groups.first?.id }
         } catch {
-            self.error = error.localizedDescription
+            if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription }
         }
     }
 
@@ -129,7 +129,7 @@ private struct ShareView: View {
             try await store.send(bodyText, to: group, clientID: clientID)
             context.completeRequest(returningItems: nil)
         } catch {
-            self.error = error.localizedDescription
+            if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription }
         }
     }
 

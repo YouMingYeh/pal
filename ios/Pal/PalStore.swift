@@ -8,6 +8,7 @@ final class PalStore: ObservableObject {
     @Published private(set) var groups: [ChatGroup] = []
     @Published var error: String?
     @Published var notice: String?
+    @Published var pushRegistrationIssue: String?
     @Published private(set) var states: [UUID: GroupState] = [:]
     @Published private(set) var profile: PalProfile?
     @Published var path: [UUID] = []
@@ -32,14 +33,14 @@ final class PalStore: ObservableObject {
     }
 
     private func request(base: URL, path: String, method: String = "GET", body: [String: String]? = nil,
-                         token: String? = nil, auth: Bool = false, json: [String: JSONValue]? = nil) async throws -> Data {
+                         token: String? = nil, auth: Bool = false, json: [String: JSONValue]? = nil, rawBody: Data? = nil, contentType: String = "application/json") async throws -> Data {
         guard let url = URL(string: base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path) else {
             throw PalFailure(message: "Invalid service URL.")
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 30
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if auth {
             guard let key = Bundle.main.object(forInfoDictionaryKey: "SupabasePublishableKey") as? String,
@@ -48,9 +49,15 @@ final class PalStore: ObservableObject {
             }
             request.setValue(key, forHTTPHeaderField: "apikey")
         }
-        if let body { request.httpBody = try JSONEncoder().encode(body) }
+        if let rawBody { request.httpBody = rawBody }
+        else if let body { request.httpBody = try JSONEncoder().encode(body) }
         else if let json { request.httpBody = try JSONEncoder().encode(json) }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        try Task.checkCancellation()
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await URLSession.shared.data(for: request) }
+        catch { if PalCancellation.isCancellation(error) { throw CancellationError() }; throw error }
+        try Task.checkCancellation()
         guard let response = response as? HTTPURLResponse else { throw PalFailure(message: "No server response.") }
         guard (200..<300).contains(response.statusCode) else {
             let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -123,19 +130,35 @@ final class PalStore: ObservableObject {
         return data
     }
 
+    func report(_ error: Error) {
+        guard !PalCancellation.isCancellation(error) else { return }
+        self.error = error.localizedDescription
+    }
+
     func loadGroups() async throws {
         struct Response: Decodable { let groups: [ChatGroup] }
         groups = try JSONDecoder().decode(Response.self, from: await api("/api/groups")).groups
     }
 
     func createGroup(name: String) async throws {
-        _ = try await api("/api/groups", method: "POST", body: ["name": name])
+        struct Response: Decodable { let group: ChatGroup }
+        let group = try JSONDecoder().decode(Response.self, from: await api("/api/groups", method: "POST", body: ["name": name.trimmingCharacters(in: .whitespacesAndNewlines)] )).group
         try await loadGroups()
+        path = [group.id]
     }
 
     func joinGroup(code: String) async throws {
-        _ = try await api("/api/groups/join", method: "POST", body: ["invite_code": code.trimmingCharacters(in: .whitespacesAndNewlines)])
+        guard let invite = Self.inviteCode(from: code) else { throw PalFailure(message: "Paste a Pal invite link or valid invite code.") }
+        struct Response: Decodable { let group: ChatGroup }
+        let group = try JSONDecoder().decode(Response.self, from: await api("/api/groups/join", method: "POST", body: ["invite_code": invite])).group
         try await loadGroups()
+        path = [group.id]
+    }
+
+    static func inviteCode(from text: String) -> String? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let uuid = UUID(uuidString: value) { return uuid.uuidString.lowercased() }
+        return URL(string: value).flatMap { inviteCode(from: $0) }
     }
 
     func messages(in group: ChatGroup) async throws -> [ChatMessage] {
@@ -176,9 +199,32 @@ final class PalStore: ObservableObject {
         }
     }
 
+    func uploadAvatar(data: Data, displayName: String? = nil) async throws {
+        guard !data.isEmpty, data.count <= 2 * 1024 * 1024 else { throw PalFailure(message: "Choose a photo smaller than 2 MB.") }
+        let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let name, name.isEmpty || name.utf16.count > 60 { throw PalFailure(message: "Use a name with 1 to 60 characters.") }
+        let owner = userID
+        let boundary = "PalAvatar-" + UUID().uuidString
+        var body = Data()
+        if let name { body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"display_name\"\r\n\r\n\(name)\r\n".utf8)) }
+        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"avatar.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".utf8))
+        body.append(data)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        let response = try await request(base: configuredURL("PalAPIURL"), path: "/api/profile/avatar", method: "POST", token: token(), rawBody: body, contentType: "multipart/form-data; boundary=\(boundary)")
+        guard userID == owner else { throw CancellationError() }
+        struct Response: Decodable { let profile: PalProfile }
+        profile = try JSONDecoder().decode(Response.self, from: response).profile
+    }
+
     func registerDevice(token: String) async throws {
         let environment = Bundle.main.object(forInfoDictionaryKey: "PalPushEnvironment") as? String ?? "sandbox"
         _ = try await api("/api/devices", method: "POST", body: ["token": token, "environment": environment])
+        pushRegistrationIssue = nil
+    }
+
+    func recordPushRegistrationError(_ description: String) {
+        pushRegistrationIssue = description
+        error = "Notifications could not register: " + description
     }
 
     func unregisterDevice(token: String) async throws {
@@ -213,10 +259,26 @@ final class PalStore: ObservableObject {
             pendingInvite = code
             UserDefaults.standard.set(code, forKey: "PendingPalInvite")
             if isSignedIn { Task { await acceptPendingInvite() } }
+        } else if let route = Self.calendarPlanRoute(from: url) {
+            let payload = ["group_id": route.groupID.uuidString, "entity_id": route.planID.uuidString, "type": "plan"]
+            UserDefaults.standard.set(payload, forKey: "PalPendingNotification")
+            handleNotification(payload)
         } else if url.scheme == "pal", url.host == "calendar" {
             if parts.queryItems?.first(where: { $0.name == "status" })?.value == "connected" { notice = "Google Calendar connected." }
             else { error = "Google Calendar did not connect. Please try again." }
         }
+    }
+
+    static func calendarPlanRoute(from url: URL) -> (groupID: UUID, planID: UUID)? {
+        let parts = url.pathComponents.filter { $0 != "/" }
+        guard url.scheme == "pal", url.host == "group", url.user == nil, url.password == nil,
+              let first = parts.first, let groupID = UUID(uuidString: first) else { return nil }
+        let planValue: String?
+        if parts.count == 3, parts[1] == "plan" { planValue = parts[2] }
+        else if parts.count == 1 { planValue = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "plan" }?.value }
+        else { return nil }
+        guard let planValue, let planID = UUID(uuidString: planValue) else { return nil }
+        return (groupID, planID)
     }
 
     func acceptPendingInvite() async {
@@ -226,7 +288,7 @@ final class PalStore: ObservableObject {
             if let group = groups.first(where: { $0.inviteCode == pendingInvite }) { path = [group.id] }
             self.pendingInvite = nil
             UserDefaults.standard.removeObject(forKey: "PendingPalInvite")
-        } catch { self.error = error.localizedDescription }
+        } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
     }
 
     @discardableResult
@@ -235,7 +297,7 @@ final class PalStore: ObservableObject {
             requestedEntity = card
             path = [groupID]
             return true
-        } catch { self.error = error.localizedDescription; return false }
+        } catch { report(error); return false }
     }
 
     func handleNotification(_ payload: [AnyHashable: Any]) {
@@ -253,7 +315,7 @@ final class PalStore: ObservableObject {
     func logout() async {
         if let token = UserDefaults.standard.string(forKey: "PalDeviceToken") {
             do { try await unregisterDevice(token: token) }
-            catch { self.error = "Could not disconnect notifications. Please retry sign out. " + error.localizedDescription; return }
+            catch { if !PalCancellation.isCancellation(error) { self.error = "Could not disconnect notifications. Please retry sign out. " + error.localizedDescription }; return }
         }
         signOut()
     }
@@ -280,7 +342,7 @@ final class PalStore: ObservableObject {
             outgoing.removeAll { $0.clientID == item.clientID }
         } catch {
             if let index = outgoing.firstIndex(where: { $0.clientID == item.clientID }) { outgoing[index].failed = true }
-            self.error = error.localizedDescription
+            report(error)
         }
         persistOutgoing()
     }

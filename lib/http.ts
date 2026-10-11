@@ -2,7 +2,7 @@ import { ZodError } from "zod";
 import { userClient } from "./db";
 import { id } from "./validation";
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
