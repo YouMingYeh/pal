@@ -81,12 +81,19 @@ async function settleFixtureJobs() {
 async function subscribeMessages(user: User, groupId: string, received: string[]) {
   await user.client.realtime.setAuth(user.token);
   await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Authenticated Realtime join timed out.")), 15000);
+    let joined = false, postgresReady = false;
+    const timeout = setTimeout(() => reject(new Error("Authenticated Postgres Changes subscription timed out.")), 45000);
+    const ready = () => { if (joined && postgresReady) { clearTimeout(timeout); resolve(); } };
     user.client.channel(`pal-check-${randomUUID()}`)
+      .on("system", {}, payload => {
+        if (payload.extension !== "postgres_changes") return;
+        if (payload.status === "ok") { postgresReady = true; ready(); }
+        else if (payload.status === "error") { clearTimeout(timeout); reject(new Error("Authenticated Postgres Changes subscription failed.")); }
+      })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `group_id=eq.${groupId}` }, payload => {
         if (typeof payload.new.id === "string") received.push(payload.new.id);
       }).subscribe(status => {
-        if (status === "SUBSCRIBED") { clearTimeout(timeout); resolve(); }
+        if (status === "SUBSCRIBED") { joined = true; ready(); }
         else if (["CHANNEL_ERROR", "TIMED_OUT"].includes(status)) { clearTimeout(timeout); reject(new Error("Authenticated Realtime join failed.")); }
       });
   });

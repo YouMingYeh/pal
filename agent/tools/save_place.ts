@@ -5,7 +5,7 @@ import { id } from "../../lib/validation";
 import { resolvePlace } from "../../lib/maps";
 
 export default defineTool({
-  description: "Save a verified place candidate from find_places. No invented coordinates, address, reservation availability, or booking status.",
+  description: "Save a verified place candidate from find_places, then tell the group the actual name and useful detail in plain text. No invented coordinates, address, reservation availability, or booking status.",
   inputSchema: z.object({ query: z.string().trim().min(1).max(200), provider_id: z.string().min(1).max(300), source_id: id.optional() }),
   async execute({ query, provider_id, source_id }, context) {
     const candidate = (await resolvePlace(query)).find(place => place.provider_id === provider_id);

@@ -26,36 +26,39 @@ struct PalMascotAvatar: View {
     private var live: Bool { animated && appeared && visible && scenePhase == .active && !reduceMotion && !failed }
 
     var body: some View {
+        let motion = live && activity != .thinking ? PalMascotFrames.image(for: expression) : nil
         ZStack {
             Image("PalMascot-" + expression).resizable().scaledToFit()
                 .frame(width: size * 1.5, height: size * 1.5)
-                .opacity(live && ready ? 0 : 1)
+                .opacity(live && (activity == .thinking ? ready : motion != nil) ? 0 : 1)
             if live {
-                if activity == .speaking {
-                    player.phaseAnimator([false, true]) { content, phase in
-                        content.offset(y: phase ? -2 : 0).rotationEffect(.degrees(phase ? 2 : -2))
-                    } animation: { _ in .easeInOut(duration: 0.55) }
-                } else { player }
+                if activity == .thinking { player }
+                else if let motion {
+                    MascotFramePlayer(image: motion, emotion: expression, activity: activity)
+                        .frame(width: size * 1.5, height: size * 1.5)
+                }
             }
         }
         .frame(width: size, height: size)
         .allowsHitTesting(false).accessibilityHidden(true)
         .background {
             GeometryReader { geometry in
-                Color.clear.preference(key: MascotFrame.self, value: geometry.frame(in: .global))
+                Color.clear
+                    .onAppear { updateVisibility(geometry.frame(in: .global)) }
+                    .onChange(of: geometry.frame(in: .global)) { _, frame in updateVisibility(frame) }
             }
         }
-        .onPreferenceChange(MascotFrame.self) { frame in
-            let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-                .flatMap(\.windows).first(where: \.isKeyWindow)
-            visible = window.map { frame.width > 0 && frame.height > 0 && frame.intersects($0.bounds) } ?? false
-        }
         .onAppear { appeared = true }
-        .onDisappear { appeared = false; ready = false }
+        .onDisappear { appeared = false; visible = false; ready = false }
         .onChange(of: live) { _, _ in ready = false }
         .onChange(of: animated) { _, _ in failed = false; ready = false }
         .onChange(of: activity) { _, _ in failed = false }
         .onChange(of: emotion) { _, _ in failed = false }
+    }
+    private func updateVisibility(_ frame: CGRect) {
+        let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).first(where: \.isKeyWindow)
+        visible = window.map { frame.width > 0 && frame.height > 0 && frame.intersects($0.bounds) } ?? false
     }
     private var player: some View {
         MascotWebPlayer(expression: expression, ready: $ready, failed: $failed)
@@ -64,9 +67,82 @@ struct PalMascotAvatar: View {
     }
 }
 
-private struct MascotFrame: PreferenceKey {
-    static var defaultValue = CGRect.zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+@MainActor enum PalMascotFrames {
+    private static var cache: [String: UIImage] = [:]
+    static func image(for emotion: String) -> UIImage? {
+        let expression = PalMascotEmotion.normalized(emotion)
+        if let image = cache[expression] { return image }
+        let frames = (0..<32).compactMap { UIImage(named: "PalMascotMotion-\(expression)-\($0)") }
+        guard frames.count == 32, let image = UIImage.animatedImage(with: frames, duration: 4) else { return nil }
+        // shortcut: a four-second sampled loop, use the live engine for continuous interactive motion.
+        cache[expression] = image
+        return image
+    }
+}
+
+struct MascotFramePlayer: UIViewRepresentable {
+    let image: UIImage
+    var emotion = "fier"
+    var activity: PalMascotActivity = .idle
+    final class Coordinator { var motion: String? }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.contentMode = .scaleAspectFit
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = false
+        return view
+    }
+    func updateUIView(_ view: UIImageView, context: Context) {
+        if view.image !== image.images?.first {
+            view.stopAnimating()
+            view.image = image.images?.first
+            view.animationImages = image.images
+            view.animationDuration = image.duration
+            view.animationRepeatCount = 0
+        }
+        if !view.isAnimating { view.startAnimating() }
+        let motion = "\(emotion)-\(activity)"
+        if context.coordinator.motion != motion {
+            context.coordinator.motion = motion
+            view.layer.removeAnimation(forKey: "PalMascotBody")
+            if let animation = bodyAnimation() { view.layer.add(animation, forKey: "PalMascotBody") }
+        }
+    }
+    static func dismantleUIView(_ view: UIImageView, coordinator: Coordinator) {
+        view.stopAnimating()
+        view.animationImages = nil
+        view.layer.removeAnimation(forKey: "PalMascotBody")
+    }
+    private func bodyAnimation() -> CAKeyframeAnimation? {
+        let poses: [CGAffineTransform], times: [Double], duration: Double
+        switch emotion {
+        case "heureux", "hilare":
+            poses = [.identity, CGAffineTransform(translationX: 0, y: -3).scaledBy(x: 1.03, y: 0.97), CGAffineTransform(scaleX: 0.98, y: 1.02), .identity, .identity]
+            times = [0, 0.25, 0.4, 0.65, 1]; duration = 1.7
+        case "timide":
+            poses = [CGAffineTransform(rotationAngle: -.pi / 36), CGAffineTransform(rotationAngle: .pi / 36).translatedBy(x: 0, y: 1), CGAffineTransform(rotationAngle: -.pi / 36)]
+            times = [0, 0.5, 1]; duration = 2.8
+        case "confus":
+            poses = [.identity, CGAffineTransform(rotationAngle: -.pi / 20), CGAffineTransform(rotationAngle: -.pi / 20), .identity]
+            times = [0, 0.35, 0.65, 1]; duration = 3
+        case "colere":
+            poses = [.identity, CGAffineTransform(translationX: -1, y: 0), CGAffineTransform(translationX: 1, y: 0), CGAffineTransform(translationX: -1, y: 0), .identity, .identity]
+            times = [0, 0.2, 0.3, 0.4, 0.7, 1]; duration = 1.8
+        default:
+            guard activity == .speaking else { return nil }
+            poses = [CGAffineTransform(rotationAngle: -.pi / 90), CGAffineTransform(translationX: 0, y: -2).rotated(by: .pi / 90), CGAffineTransform(rotationAngle: -.pi / 90)]
+            times = [0, 0.5, 1]; duration = 1.1
+        }
+        // Match the supplied demo's emotion CSS without a SwiftUI redraw loop.
+        let animation = CAKeyframeAnimation(keyPath: "transform")
+        animation.values = poses.map { NSValue(caTransform3D: CATransform3DMakeAffineTransform($0)) }
+        animation.keyTimes = times.map { NSNumber(value: $0) }
+        animation.timingFunctions = (1..<times.count).map { _ in CAMediaTimingFunction(name: .easeInEaseOut) }
+        animation.duration = duration
+        animation.repeatCount = .infinity
+        return animation
+    }
 }
 
 struct MascotWebPlayer: UIViewRepresentable {

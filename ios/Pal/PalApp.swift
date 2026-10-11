@@ -7,7 +7,7 @@ struct PalApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(store)
+            RootView().environmentObject(store).modifier(PalLaunchEntrance())
         }
     }
 }

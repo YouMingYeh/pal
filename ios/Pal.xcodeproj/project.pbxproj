@@ -8,15 +8,19 @@
 
 /* Begin PBXBuildFile section */
 		10C3BBC075B35D721480EADD /* NativeServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F75E356BE8C70C232165D3C /* NativeServices.swift */; };
+		16C0F9077476CA3EF6A70E55 /* MessageCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8C8562E2ECE45D0C47E7676 /* MessageCacheTests.swift */; };
 		1CD0DE19FB25A806F7AFEDBD /* GroupAccessViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4451B761072B9C27BA52A44D /* GroupAccessViews.swift */; };
 		1E75C2AF5CA966295961C075 /* MascotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04CBFAF2EEE8BD5E30A34B63 /* MascotView.swift */; };
 		1EE09B99987D4EA02BFF335C /* SettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DADA4FFAEAFA3D5257E7643D /* SettingsViews.swift */; };
+		2345BC456095A6DFB25410C4 /* PalRealtime.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6106F306C53A757C2E76AF2 /* PalRealtime.swift */; };
 		24D28BBFC7BDE1C8C0288D49 /* GroupAccessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7796669AF9D046DE352DCD3 /* GroupAccessTests.swift */; };
 		294FF5CD7D1120FBBE94FD30 /* GroupViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6B05588AFFC774B98F506B /* GroupViews.swift */; };
 		2B15065AAFA4FEE9C28E7EF9 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */; };
 		2E134CFE129D6CFA85515D86 /* PalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D7C60E655D843D1BED0D0B2 /* PalTests.swift */; };
 		366EC1B7AD109BA24AB7CFB7 /* MascotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D72D1A669F60D129E92ADFD0 /* MascotTests.swift */; };
 		3A76AFF126F29A8DDCFEFD6A /* PalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3199B39DF7A2E23079D49E8 /* PalModels.swift */; };
+		3BF813BC992E4B0DC59D1E1B /* LaunchEntrance.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8269DC8AA3590DC731E4ED2 /* LaunchEntrance.swift */; };
+		4C95A69E46B40FF2430AD091 /* RealtimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EF992B57DBD85ABDC9EB367 /* RealtimeTests.swift */; };
 		521BD5720E5AEABE226DD814 /* Mascot in Resources */ = {isa = PBXBuildFile; fileRef = 602530206C04C0BB566C541E /* Mascot */; };
 		54BA4FB3AB449CFF1C0F9498 /* MediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D272BA7F13EC017888610A1D /* MediaViews.swift */; };
 		554615F5DDDF6661E12A3CA5 /* PalTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6EBAB0DEB6EF61AA51B1720 /* PalTheme.swift */; };
@@ -33,7 +37,11 @@
 		B906E4629C5D7A2A1FF83DCE /* AppleCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 284C3A207436DC0563A05224 /* AppleCalendar.swift */; };
 		C0F4634D5863364F9CC77957 /* Cards.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA03BD836188F8D6E6DE8284 /* Cards.swift */; };
 		C5E052831ED7696DED5888B8 /* PalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3199B39DF7A2E23079D49E8 /* PalModels.swift */; };
+		D07ED05E11791526B2677280 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 4F34EE4DBDD432BD5535A4A0 /* LaunchScreen.storyboard */; };
+		D215AB1552C1D274670273F4 /* PalRealtime.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6106F306C53A757C2E76AF2 /* PalRealtime.swift */; };
+		DB1CFE6B277570AD1831228C /* PalMessageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 740DE8D7ED972EE6A35D5454 /* PalMessageCache.swift */; };
 		DD1EAB252B10433ED52B6AD6 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91916F06B448D4DD9F4899AC /* Views.swift */; };
+		DDC9250D226D9E2C03959727 /* PalMessageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 740DE8D7ED972EE6A35D5454 /* PalMessageCache.swift */; };
 		DE32C06D20240D56DD61F281 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E1E2F9EF8B322C89126EA /* Session.swift */; };
 		DF5D6BCC2EC4D3D51E82B982 /* Attachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18C60A2C804E3A9DEF573F8C /* Attachments.swift */; };
 		E230B2750A8FB1AEFC986800 /* Attachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18C60A2C804E3A9DEF573F8C /* Attachments.swift */; };
@@ -78,8 +86,11 @@
 		3F75E356BE8C70C232165D3C /* NativeServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeServices.swift; sourceTree = "<group>"; };
 		4451B761072B9C27BA52A44D /* GroupAccessViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupAccessViews.swift; sourceTree = "<group>"; };
 		4BA5B696C4F2C7FBBF761292 /* MediaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTests.swift; sourceTree = "<group>"; };
+		4F34EE4DBDD432BD5535A4A0 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		602530206C04C0BB566C541E /* Mascot */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Mascot; path = Pal/Mascot; sourceTree = SOURCE_ROOT; };
 		6ECB52FD5C6EA8F4E85582B5 /* Pal.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Pal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6EF992B57DBD85ABDC9EB367 /* RealtimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeTests.swift; sourceTree = "<group>"; };
+		740DE8D7ED972EE6A35D5454 /* PalMessageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalMessageCache.swift; sourceTree = "<group>"; };
 		76582FE248D91909FDC58AFF /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		8D7C60E655D843D1BED0D0B2 /* PalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalTests.swift; sourceTree = "<group>"; };
 		91916F06B448D4DD9F4899AC /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
@@ -90,10 +101,12 @@
 		A6BC3535EFC4889BBE81CF1F /* PalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalStore.swift; sourceTree = "<group>"; };
 		A7796669AF9D046DE352DCD3 /* GroupAccessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupAccessTests.swift; sourceTree = "<group>"; };
 		A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
+		A8C8562E2ECE45D0C47E7676 /* MessageCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageCacheTests.swift; sourceTree = "<group>"; };
 		B43FC484ABC09349014E7F82 /* Share.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Share.entitlements; sourceTree = "<group>"; };
 		B6EBAB0DEB6EF61AA51B1720 /* PalTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalTheme.swift; sourceTree = "<group>"; };
 		B843A5464B654524A098D7D4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		BB4A5335926110F52607F2F2 /* PalShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PalShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C6106F306C53A757C2E76AF2 /* PalRealtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalRealtime.swift; sourceTree = "<group>"; };
 		C6935B627C04EB82CE57CE0D /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		CA03BD836188F8D6E6DE8284 /* Cards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cards.swift; sourceTree = "<group>"; };
 		CF1F6907C77B7FC03D7D47D9 /* Pal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pal.entitlements; sourceTree = "<group>"; };
@@ -103,6 +116,7 @@
 		E3199B39DF7A2E23079D49E8 /* PalModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalModels.swift; sourceTree = "<group>"; };
 		E5F2FA3E3E82587B666C8E4A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		EEF13EE303B074658390805C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F8269DC8AA3590DC731E4ED2 /* LaunchEntrance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchEntrance.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -133,7 +147,9 @@
 				A7796669AF9D046DE352DCD3 /* GroupAccessTests.swift */,
 				D72D1A669F60D129E92ADFD0 /* MascotTests.swift */,
 				4BA5B696C4F2C7FBBF761292 /* MediaTests.swift */,
+				A8C8562E2ECE45D0C47E7676 /* MessageCacheTests.swift */,
 				8D7C60E655D843D1BED0D0B2 /* PalTests.swift */,
+				6EF992B57DBD85ABDC9EB367 /* RealtimeTests.swift */,
 			);
 			path = PalTests;
 			sourceTree = "<group>";
@@ -170,6 +186,8 @@
 				4451B761072B9C27BA52A44D /* GroupAccessViews.swift */,
 				0B6B05588AFFC774B98F506B /* GroupViews.swift */,
 				E5F2FA3E3E82587B666C8E4A /* Info.plist */,
+				F8269DC8AA3590DC731E4ED2 /* LaunchEntrance.swift */,
+				4F34EE4DBDD432BD5535A4A0 /* LaunchScreen.storyboard */,
 				04CBFAF2EEE8BD5E30A34B63 /* MascotView.swift */,
 				D272BA7F13EC017888610A1D /* MediaViews.swift */,
 				3F75E356BE8C70C232165D3C /* NativeServices.swift */,
@@ -187,6 +205,8 @@
 			isa = PBXGroup;
 			children = (
 				18C60A2C804E3A9DEF573F8C /* Attachments.swift */,
+				740DE8D7ED972EE6A35D5454 /* PalMessageCache.swift */,
+				C6106F306C53A757C2E76AF2 /* PalRealtime.swift */,
 				B6EBAB0DEB6EF61AA51B1720 /* PalTheme.swift */,
 				A57E1E2F9EF8B322C89126EA /* Session.swift */,
 			);
@@ -301,6 +321,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6986A9D161407603CD6B4CF1 /* Assets.xcassets in Resources */,
+				D07ED05E11791526B2677280 /* LaunchScreen.storyboard in Resources */,
 				521BD5720E5AEABE226DD814 /* Mascot in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -318,11 +339,14 @@
 				C0F4634D5863364F9CC77957 /* Cards.swift in Sources */,
 				1CD0DE19FB25A806F7AFEDBD /* GroupAccessViews.swift in Sources */,
 				294FF5CD7D1120FBBE94FD30 /* GroupViews.swift in Sources */,
+				3BF813BC992E4B0DC59D1E1B /* LaunchEntrance.swift in Sources */,
 				1E75C2AF5CA966295961C075 /* MascotView.swift in Sources */,
 				54BA4FB3AB449CFF1C0F9498 /* MediaViews.swift in Sources */,
 				10C3BBC075B35D721480EADD /* NativeServices.swift in Sources */,
 				7460D1FA42AD213B00A903CD /* PalApp.swift in Sources */,
+				DB1CFE6B277570AD1831228C /* PalMessageCache.swift in Sources */,
 				3A76AFF126F29A8DDCFEFD6A /* PalModels.swift in Sources */,
+				D215AB1552C1D274670273F4 /* PalRealtime.swift in Sources */,
 				661649F05F2D1060FA1473D7 /* PalStore.swift in Sources */,
 				554615F5DDDF6661E12A3CA5 /* PalTheme.swift in Sources */,
 				8F08E1EC98CFC88D06A5F7C8 /* Session.swift in Sources */,
@@ -336,7 +360,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				DF5D6BCC2EC4D3D51E82B982 /* Attachments.swift in Sources */,
+				DDC9250D226D9E2C03959727 /* PalMessageCache.swift in Sources */,
 				C5E052831ED7696DED5888B8 /* PalModels.swift in Sources */,
+				2345BC456095A6DFB25410C4 /* PalRealtime.swift in Sources */,
 				8F8FCE6561D85B1DDFF7B026 /* PalStore.swift in Sources */,
 				A23128CD8D82D4C7F0774CE7 /* PalTheme.swift in Sources */,
 				DE32C06D20240D56DD61F281 /* Session.swift in Sources */,
@@ -352,7 +378,9 @@
 				24D28BBFC7BDE1C8C0288D49 /* GroupAccessTests.swift in Sources */,
 				366EC1B7AD109BA24AB7CFB7 /* MascotTests.swift in Sources */,
 				5A16361965046D382CE31737 /* MediaTests.swift in Sources */,
+				16C0F9077476CA3EF6A70E55 /* MessageCacheTests.swift in Sources */,
 				2E134CFE129D6CFA85515D86 /* PalTests.swift in Sources */,
+				4C95A69E46B40FF2430AD091 /* RealtimeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -418,7 +446,6 @@
 				INFOPLIST_FILE = Pal/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pal;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -441,7 +468,6 @@
 				INFOPLIST_FILE = Pal/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pal;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

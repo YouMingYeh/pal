@@ -7,3 +7,5 @@ DoodlePlaces, DoodleCalendar, DoodleReminder, DoodleChat: Khushmeen Sidhu, https
 PalLogo and AppIcon: user-supplied Pal artwork, 2026-10-11. AppIcon is the same artwork resized to the required 1024×1024 size.
 
 PalMascot expressions: user-supplied `pal-mascot-handoff-v1`, rendered from its transparent SVGs. The orange and warm-white artwork is identical in light and dark appearances. The local animation player retains the Bloub MIT license in `Pal/Mascot/Bloub-LICENSE.txt`; integration provenance is in `Pal/Mascot/PROVENANCE.md`.
+
+Mock member portraits: Pravatar, https://pravatar.cc/ (CC0 Avatar Placeholder). Eight stock portraits identify fictional hackathon characters; the files are staged and uploaded to private avatar storage by `scripts/reset-demo.ts`, not bundled as app assets.

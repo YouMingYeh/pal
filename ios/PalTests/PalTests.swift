@@ -8,6 +8,14 @@ import AVFoundation
 @testable import Pal
 
 final class PalTests: XCTestCase {
+    func testPrivatePalRoomAndLegacyGroupsDecodeWithoutAnInvite() throws {
+        let privateRoom = try JSONDecoder().decode(ChatGroup.self, from: Data("{\"id\":\"\(UUID())\",\"name\":\"Pal\",\"is_direct\":true,\"invite_code\":null}".utf8))
+        XCTAssertTrue(privateRoom.isDirect)
+        XCTAssertEqual(privateRoom.inviteCode, "")
+        let legacy = try JSONDecoder().decode(ChatGroup.self, from: Data("{\"id\":\"\(UUID())\",\"name\":\"Friends\",\"invite_code\":\"\(UUID())\"}".utf8))
+        XCTAssertFalse(legacy.isDirect)
+        XCTAssertFalse(legacy.inviteCode.isEmpty)
+    }
     func testMascotExpressionsHaveBundledTransparentArtworkAndSafeFallback() throws {
         XCTAssertEqual(PalMascotEmotion.normalized(nil), "fier")
         XCTAssertEqual(PalMascotEmotion.normalized("unknown"), "fier")
@@ -41,23 +49,33 @@ final class PalTests: XCTestCase {
         XCTAssertFalse(decoded.isThinking(at: now))
     }
 
-    func testFreshPalReplyAnimatesOnlyOnceAndNeverReplaysHistory() throws {
-        func message(_ role: String, emotion: String? = nil) throws -> ChatMessage {
-            let json: [String: Any] = ["id": UUID().uuidString, "group_id": UUID().uuidString, "role": role, "body": "A real reply", "created_at": "2026-10-11T20:00:00Z", "emotion": emotion as Any? ?? NSNull()]
-            return try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: json))
-        }
-        let old = try message("pal"), human = try message("user"), fresh = try message("pal", emotion: "heureux")
-        XCTAssertNil(old.emotion)
-        XCTAssertEqual(fresh.emotion, "heureux")
-        var lifecycle = PalReplyAnimationState()
-        XCTAssertNil(lifecycle.receive([old]))
-        XCTAssertNil(lifecycle.receive([old, human]))
-        XCTAssertEqual(lifecycle.receive([old, human, fresh]), fresh.id)
-        XCTAssertNil(lifecycle.receive([old, human, fresh]))
-        lifecycle.resume()
-        let whileAway = try message("pal", emotion: "curieux")
-        XCTAssertNil(lifecycle.receive([old, human, fresh, whileAway]))
-        XCTAssertNil(lifecycle.receive([old, human, fresh, whileAway]))
+    func testReplyKeepsStoredToneAndStableClientIdentity() throws {
+        let id = UUID(), client = UUID(), group = UUID()
+        let json: [String: Any] = ["id": id.uuidString, "client_id": client.uuidString, "group_id": group.uuidString, "role": "pal", "body": "**Tomorrow**\nhttps://example.com/menu", "created_at": "2026-10-11T20:00:00Z", "emotion": "heureux"]
+        let message = try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(message.emotion, "heureux")
+        XCTAssertEqual(message.timelineID, client)
+        let pending = OutgoingMessage(groupID: group, userID: UUID(), clientID: client, body: message.body, failed: false, createdAt: message.createdAt)
+        XCTAssertEqual(ChatTimelineItem.outgoing(pending).id, ChatTimelineItem.message(message).id)
+        XCTAssertEqual(ChatTimelineItem.outgoing(pending).createdAt, ChatTimelineItem.message(message).createdAt)
+        let formatted = PalText.linked(message.body, markdown: true)
+        XCTAssertEqual(String(formatted.characters), "Tomorrow\nhttps://example.com/menu")
+        XCTAssertTrue(formatted.runs.contains { $0.link == URL(string: "https://example.com/menu") })
+        XCTAssertTrue(String(PalText.linked(message.body).characters).contains("**Tomorrow**"))
+        XCTAssertEqual(message.plainBody(in: .empty), message.body)
+    }
+
+    func testLegacyCardHasReadablePlainTextInsteadOfAnEmptyBubble() throws {
+        let planID = UUID(), groupID = UUID()
+        let json: [String: Any] = ["id": UUID().uuidString, "group_id": groupID.uuidString, "role": "pal", "body": "Dinner", "created_at": "2026-10-11T20:00:00Z", "cards": [["type": "plan", "entity_id": planID.uuidString]]]
+        let message = try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: json))
+        var state = GroupState.empty
+        state.plans = [GroupPlan(id: planID, title: "Dinner", startsAt: "2026-10-12T02:00:00Z", status: "confirmed", attendees: [])]
+        XCTAssertNil(message.displayedBody(in: state))
+        let text = try XCTUnwrap(message.plainBody(in: state))
+        XCTAssertTrue(text.contains("Dinner"))
+        XCTAssertTrue(text.contains("Confirmed"))
+        XCTAssertFalse(text.contains("entity_id"))
     }
 
     @MainActor func testAutomaticPushFailureStaysInlineAndDoesNotInterruptNavigation() {
@@ -440,10 +458,30 @@ final class PalTests: XCTestCase {
         try await alice.createGroup(name: name, avatarData: avatarData, clientID: creationID)
         XCTAssertEqual(alice.path, [groupID])
         try await bob.joinGroup(code: group.inviteCode)
+        let realtime = PalRealtime()
+        let ready = expectation(description: "Native authenticated WebSocket CDC ready")
+        let inserted = expectation(description: "Native member receives actual attachment message INSERT")
+        var readyOnce = false, receivedOnce = false
+        let jwt = try XCTUnwrap(bob.storedSession?.session.accessToken)
+        let project = try XCTUnwrap((Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String).flatMap(URL.init(string:)))
+        let key = try XCTUnwrap(Bundle.main.object(forInfoDictionaryKey: "SupabasePublishableKey") as? String)
+        let socketTask = Task { await realtime.run(url: project, key: key, groupIDs: [groupID], token: { jwt }, onReady: {
+            if !readyOnce { readyOnce = true; ready.fulfill() }
+        }, onChange: { changed in
+            if changed == groupID, !receivedOnce { receivedOnce = true; inserted.fulfill() }
+        }) }
+        defer { socketTask.cancel() }
+        await fulfillment(of: [ready], timeout: 20)
+        XCTAssertTrue(readyOnce)
         let image = try AttachmentFiles.prepare(imageData: photoData)
         defer { try? AttachmentFiles.remove(image) }
         let photoClientID = UUID()
         let sentPhoto = try await alice.sendAttachment(image, body: "Native photo verification", to: group, clientID: photoClientID, replyTo: nil)
+        await fulfillment(of: [inserted], timeout: 15)
+        XCTAssertTrue(receivedOnce)
+        socketTask.cancel()
+        await socketTask.value
+        XCTAssertFalse(realtime.isRunning)
         let retriedPhoto = try await alice.sendAttachment(image, body: "Native photo verification", to: group, clientID: photoClientID, replyTo: nil)
         XCTAssertEqual(sentPhoto.id, retriedPhoto.id)
         XCTAssertEqual(sentPhoto.attachments.first?.kind, "image")
@@ -484,6 +522,13 @@ final class PalTests: XCTestCase {
         try await store.authenticate(email: email, password: password, signUp: false)
         try await store.loadGroups()
         try await store.loadProfile()
+        let direct = try XCTUnwrap(store.groups.first { $0.isDirect })
+        XCTAssertEqual(store.groups.filter(\.isDirect).count, 1)
+        XCTAssertTrue(direct.inviteCode.isEmpty)
+        try await store.loadState(direct)
+        XCTAssertEqual(store.states[direct.id]?.members.map(\.userID), [try XCTUnwrap(store.userID)])
+        try await attachScreenshot(of: GroupsView().environmentObject(store), name: "Live private Pal pinned in Chats")
+        try await attachScreenshot(of: NavigationStack { ChatView(group: direct) }.environmentObject(store).environment(\.scenePhase, .active), name: "Live private Pal conversation")
         let group = try XCTUnwrap(store.groups.first { $0.id == groupID })
         try await store.loadState(group)
         let state = try XCTUnwrap(store.states[groupID])
@@ -494,13 +539,6 @@ final class PalTests: XCTestCase {
         XCTAssertFalse(state.memories.isEmpty)
         try await store.joinGroup(code: "https://pal-jade.vercel.app/join/" + group.inviteCode)
         XCTAssertEqual(store.path, [groupID])
-        if let poll = state.polls.first(where: { $0.kind == "time" && $0.canVote() }) {
-            let previous = poll.votes.filter { $0.userID == store.userID }.map(\.optionID)
-            try await store.mutate(group, action: "poll.vote", data: ["id": .string(poll.id.uuidString), "option_ids": .array([])])
-            XCTAssertTrue(store.states[groupID]?.polls.first(where: { $0.id == poll.id })?.noneWork(for: store.userID) == true)
-            try await attachScreenshot(of: NavigationStack { PollCardView(group: group, pollID: poll.id).padding() }.environmentObject(store), name: "Live v1 no available times")
-            if !previous.isEmpty { try await store.mutate(group, action: "poll.vote", data: ["id": .string(poll.id.uuidString), "option_ids": .array(previous.map(JSONValue.string))]) }
-        }
         let messages = try await store.messages(in: group)
         XCTAssertTrue(messages.contains { $0.role == "pal" })
         XCTAssertTrue(messages.contains { !$0.cards.isEmpty })
@@ -515,15 +553,7 @@ final class PalTests: XCTestCase {
         try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store), name: "Live v1 profile and Google Calendar", wait: 6)
         try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store).preferredColorScheme(.dark), name: "Live v1 profile dark", wait: 6)
         if let plan = state.plans.first(where: { $0.status != "cancelled" }) { try await attachScreenshot(of: NavigationStack { PlanDetailView(group: group, plan: plan) }.environmentObject(store), name: "Live v1 plan details") }
-        var seenCards: Set<String> = []
-        let cards = messages.flatMap(\.cards).filter { seenCards.insert($0.id).inserted }
-        try await attachScreenshot(of: NavigationStack {
-            ScrollView { VStack(alignment: .leading, spacing: 16) { ForEach(cards) { PalCardView(group: group, card: $0) } }.padding() }
-                .background(Color(uiColor: .systemBackground)).navigationTitle("Group decisions")
-        }.environmentObject(store), name: "Live v1 cards")
-        if let card = cards.last {
-            try await attachScreenshot(of: NavigationStack { ScrollView { PalCardView(group: group, card: card).padding() }.background(Color(uiColor: .systemBackground)) }.environmentObject(store).environment(\.dynamicTypeSize, .accessibility3).preferredColorScheme(.dark), name: "Live v1 accessible dark card")
-        }
+
     }
 
     @MainActor

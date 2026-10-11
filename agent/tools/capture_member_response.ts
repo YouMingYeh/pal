@@ -4,7 +4,7 @@ import { jobScope, scopeId } from "../../lib/job-scope";
 import { memberResponseInput, prepareMemberResponse, type ResponseState } from "../../lib/member-response";
 
 export default defineTool({
-  description: "Record the verified speaker's own explicit message response to an existing open poll or confirmed plan. Supply the entire source message as exact evidence. Never infer RSVP from anything works, quote another person, confirm a plan or book anything. Ambiguous responses require one short clarification.",
+  description: "Record the verified speaker's own explicit attendance for a confirmed plan, or their explicit confirmation of a current future draft. Legacy poll responses remain supported. Supply the entire source message as exact evidence; identity and current plan version are checked by the server. Never infer attendance or confirmation from anything works, quote another person, or book anything. Ambiguous responses need one short clarification. After a successful visible action, explain the actual result in plain text.",
   inputSchema: memberResponseInput,
   async execute(input, context) {
     const { db, job, batch } = await jobScope(scopeId(context));

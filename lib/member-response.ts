@@ -6,6 +6,7 @@ const sourceFields = { source_message_id: id, evidence: z.string().min(1).max(20
 export const memberResponseInput = z.discriminatedUnion("target_kind", [
   z.object({ ...sourceFields, target_kind: z.literal("poll"), response: z.enum(["options", "either", "none"]), option_ids: z.array(z.string().min(1).max(64)).max(8).default([]) }).strict(),
   z.object({ ...sourceFields, target_kind: z.literal("plan"), status: z.enum(["going", "maybe", "declined"]) }).strict(),
+  z.object({ ...sourceFields, target_kind: z.literal("confirmation") }).strict(),
 ]);
 type Input = z.infer<typeof memberResponseInput>;
 type Option = { id: string; label: string; starts_at?: string };
@@ -25,6 +26,11 @@ function explicitRsvp(text: string, title: string) {
   if (new RegExp("^(?:no|i (?:can't|cannot|won't|will not) (?:make it|come|attend|join)|i(?:'m| am) not (?:coming|going|attending)|我不去|我不能去|我沒辦法去|我没办法去)" + suffix, "i").test(text)) return "declined";
   if (new RegExp("^(?:maybe|i(?:'m| am) (?:a )?maybe|i (?:might|may) (?:come|attend|join)|我可能會去|我可能会去|我還不確定|我还不确定)" + suffix, "i").test(text)) return "maybe";
   return null;
+}
+
+function explicitConfirmation(text: string, title: string) {
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^(?:(?:i confirm|confirm|let's confirm|let us confirm) (?:the plan|this plan|${escaped})|(?:我確認|我确认|確認|确认)(?:這個計畫|这个计划|計畫|计划|${escaped}))[.!。！]*$`, "i").test(text);
 }
 
 function localParts(date: string, timezone: string) {
@@ -72,6 +78,16 @@ export function prepareMemberResponse(raw: unknown, batch: SourceMessage[], stat
   if (/["“”«»]|(?:^|\s)'[^']+'|[?？]|\b(?:said|says|told|asked|joking|kidding|jk|unless|if|depends|pretend|ignore|override)\b/i.test(text)
     || /\b(?:he|she|they|you|we)\s+(?:can|can't|will|won't|are|is|might|prefer|choose|vote|agree)\b/i.test(text)
     || /\b[A-Z][a-z]+\s+(?:can|can't|will|won't|is|might|prefers?|chooses?|votes?|agrees?)\b/.test(text)) clarify();
+  if (input.target_kind === "confirmation") {
+    const target = state.plans.find(plan => plan.id === input.target_id && plan.group_id === groupId);
+    if (!target || target.status !== "draft" || Date.parse(target.starts_at) <= now || Date.parse(source.created_at) < Date.parse(target.updated_at)) {
+      throw new Error("Choose a current, future draft plan discussed after its latest change.");
+    }
+    if (!explicitConfirmation(text, target.title)) clarify();
+    const active = state.plans.filter(plan => plan.status === "draft" && Date.parse(plan.starts_at) > now);
+    if (active.length !== 1 && !normalized(text).includes(normalized(target.title))) clarify();
+    return { source, response: { plan_version: target.version } };
+  }
   if (input.target_kind === "plan") {
     const target = state.plans.find(plan => plan.id === input.target_id && plan.group_id === groupId);
     if (!target || target.status !== "confirmed" || Date.parse(target.starts_at) <= now || Date.parse(source.created_at) < Date.parse(target.updated_at)) throw new Error("Choose a current, future confirmed plan discussed after its latest change.");

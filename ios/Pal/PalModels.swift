@@ -43,7 +43,18 @@ struct ChatGroup: Codable, Identifiable, Hashable {
     var unreadCount: Int?
     var lastMessage: GroupLastMessage?
     var avatarURL: String?
-    enum CodingKeys: String, CodingKey { case id, name; case inviteCode = "invite_code", unreadCount = "unread_count", lastMessage = "last_message", avatarURL = "avatar_url" }
+    let isDirect: Bool
+    enum CodingKeys: String, CodingKey { case id, name; case inviteCode = "invite_code", unreadCount = "unread_count", lastMessage = "last_message", avatarURL = "avatar_url", isDirect = "is_direct" }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        inviteCode = try c.decodeIfPresent(String.self, forKey: .inviteCode) ?? ""
+        unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount)
+        lastMessage = try c.decodeIfPresent(GroupLastMessage.self, forKey: .lastMessage)
+        avatarURL = try c.decodeIfPresent(String.self, forKey: .avatarURL)
+        isDirect = try c.decodeIfPresent(Bool.self, forKey: .isDirect) ?? false
+    }
 }
 struct GroupLastMessage: Codable, Hashable {
     var id: UUID?
@@ -71,6 +82,7 @@ struct ChatMessage: Decodable, Identifiable {
     let cards: [MessageCard]
     let attachments: [ChatAttachment]
     let emotion: String?
+    var timelineID: UUID { clientID ?? id }
     enum CodingKeys: String, CodingKey {
         case id, role, body, cards, attachments, emotion
         case groupID = "group_id", senderID = "sender_id", createdAt = "created_at", replyToID = "reply_to_id", clientID = "client_id"
@@ -95,6 +107,37 @@ struct ChatMessage: Decodable, Identifiable {
               let currentDate = PalDate.date(createdAt), let previousDate = PalDate.date(previous.createdAt) else { return false }
         let interval = currentDate.timeIntervalSince(previousDate)
         return calendar.isDate(currentDate, inSameDayAs: previousDate) && (0...180).contains(interval)
+    }
+    /// Legacy card messages stay readable while the chat itself remains plain text.
+    func plainBody(in state: GroupState) -> String? {
+        var sections: [String] = []
+        if let text = displayedBody(in: state), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { sections.append(text) }
+        for card in cards {
+            var text: String?
+            switch card.type {
+            case "plan":
+                if let plan = state.plans.first(where: { $0.id == card.entityID }) {
+                    text = [plan.title, plan.startsAt.flatMap(PalDate.date)?.formatted(date: .abbreviated, time: .shortened), plan.status.capitalized].compactMap { $0 }.joined(separator: " · ")
+                }
+            case "reminder":
+                if let reminder = state.reminders.first(where: { $0.id == card.entityID }) {
+                    text = [reminder.body, PalDate.date(reminder.dueAt)?.formatted(date: .abbreviated, time: .shortened), reminder.status == "cancelled" ? "Cancelled" : nil].compactMap { $0 }.joined(separator: " · ")
+                }
+            case "choice", "availability": text = state.polls.first { $0.id == card.entityID }?.question
+            case "place":
+                if let place = state.places.first(where: { $0.id == card.entityID }) { text = [place.name, place.address].compactMap { $0 }.joined(separator: "\n") }
+                else if let source = state.sources.first(where: { $0.id == card.entityID || $0.id == card.sourceID }) {
+                    let places = state.places.filter { (source.placeIDs ?? []).contains($0.id) }
+                    if !places.isEmpty { text = places.map { [$0.name, $0.address].compactMap { $0 }.joined(separator: "\n") }.joined(separator: "\n\n") }
+                    else if source.status == "failed" { text = "I couldn't read this link. " + (source.url ?? "") }
+                    else if source.status == "pending" { text = "Taking a look at this link. " + (source.url ?? "") }
+                    else { text = source.title ?? source.url }
+                }
+            default: break
+            }
+            if let text, !text.isEmpty, !sections.contains(text), !sections.contains(where: { $0.contains(text) }) { sections.append(text) }
+        }
+        return sections.isEmpty ? nil : sections.joined(separator: "\n\n")
     }
     func displayedBody(in state: GroupState) -> String? {
         let value = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -123,12 +166,13 @@ struct ChatMessage: Decodable, Identifiable {
 }
 
 enum PalText {
-    static func linked(_ body: String) -> AttributedString {
-        var result = AttributedString(body)
+    static func linked(_ body: String, markdown: Bool = false) -> AttributedString {
+        var result = markdown ? ((try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(body)) : AttributedString(body)
+        let visible = String(result.characters)
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return result }
-        for match in detector.matches(in: body, range: NSRange(body.startIndex..., in: body)) {
+        for match in detector.matches(in: visible, range: NSRange(visible.startIndex..., in: visible)) {
             guard let url = match.url, ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
-                  let stringRange = Range(match.range, in: body), let range = Range(stringRange, in: result) else { continue }
+                  let stringRange = Range(match.range, in: visible), let range = Range(stringRange, in: result) else { continue }
             result[range].link = url
             result[range].underlineStyle = .single
         }
@@ -335,17 +379,6 @@ struct PalWorkActivity: Decodable, Equatable {
     }
 }
 
-/// Polling and opening a chat never replay the historical replies.
-struct PalReplyAnimationState {
-    private var seen: Set<UUID> = []
-    private var hasBaseline = false
-    mutating func receive(_ messages: [ChatMessage]) -> UUID? {
-        defer { seen.formUnion(messages.map(\.id)); hasBaseline = true }
-        guard hasBaseline else { return nil }
-        return messages.last { $0.role == "pal" && !seen.contains($0.id) }?.id
-    }
-    mutating func resume() { hasBaseline = false }
-}
 struct PalProfile: Decodable {
     struct Preferences: Decodable { var enabled: Bool? }
     var userID: UUID?
@@ -368,7 +401,15 @@ struct OutgoingMessage: Codable, Identifiable {
     var replyToID: UUID?
     var failed: Bool
     var attachment: DraftAttachment?
+    var createdAt: String? = nil
     var id: UUID { clientID }
+}
+
+enum ChatTimelineItem: Identifiable {
+    case message(ChatMessage), outgoing(OutgoingMessage)
+    var id: UUID { switch self { case .message(let message): return message.timelineID; case .outgoing(let item): return item.clientID } }
+    var createdAt: String { switch self { case .message(let message): return message.createdAt; case .outgoing(let item): return item.createdAt ?? "" } }
+    var message: ChatMessage? { if case .message(let value) = self { return value }; return nil }
 }
 
 /// Navigation cancels URLSession with URLError rather than Swift CancellationError.

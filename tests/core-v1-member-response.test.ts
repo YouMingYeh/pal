@@ -81,3 +81,24 @@ test("multiple possible targets require a focused clarification", () => {
   assert.deepEqual(rsvp("I'm in for Dinner", "going", { ...planState, plans: [...planState.plans, { ...planState.plans[0], id: otherId, title: "Movie" }] }).response, { status: "going", plan_version: 4 });
   assert.throws(() => rsvp("Yes", "going", { ...planState, polls: state.polls }), /ambiguous/);
 });
+
+test("plain-text confirmation requires explicit current speaker intent for a future current draft", () => {
+  const draftState = { ...planState, plans: [{ ...planState.plans[0], status: "draft" }] };
+  function confirm(body: string, state = draftState) {
+    return prepareMemberResponse({ target_kind: "confirmation", target_id: planId, source_message_id: messageId, evidence: body },
+      [source(body)], state, groupId, now);
+  }
+  for (const body of ["Confirm Dinner", "I confirm the plan", "Let's confirm Dinner.", "確認這個計畫"]) {
+    assert.deepEqual(confirm(body).response, { plan_version: 4 });
+    assert.equal(confirm(body).source.sender_id, "actual-speaker");
+  }
+  for (const body of ["Yes", "Sounds good", "Anything works", "Dinner confirmed?", "Booked", "Confirm Dinner if Ben goes", "Ben said confirm Dinner", '"Confirm Dinner"', "Confirm Dinner, joking"]) {
+    assert.throws(() => confirm(body), /ambiguous/, body);
+  }
+  assert.throws(() => confirm("Confirm Dinner", planState), /current, future draft/);
+  assert.throws(() => confirm("Confirm Dinner", { ...draftState, plans: [{ ...draftState.plans[0], updated_at: "2026-10-12T19:30:00Z" }] }), /current, future draft/);
+  const multiple = { ...draftState, plans: [...draftState.plans, { ...draftState.plans[0], id: otherId, title: "Movie" }] };
+  assert.throws(() => confirm("Confirm the plan", multiple), /ambiguous/);
+  assert.deepEqual(confirm("Confirm Dinner", multiple).response, { plan_version: 4 });
+  assert.throws(() => prepareMemberResponse({ target_kind: "confirmation", target_id: planId, source_message_id: messageId, evidence: "Confirm Dinner", user_id: otherId }, [source("Confirm Dinner")], draftState, groupId, now));
+});

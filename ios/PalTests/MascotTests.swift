@@ -4,6 +4,69 @@ import WebKit
 @testable import Pal
 
 final class MascotTests: XCTestCase {
+    @MainActor func testEveryEmotionSharesARealAnimatedFrameSequence() throws {
+        for emotion in PalMascotEmotion.all {
+            let image = try XCTUnwrap(PalMascotFrames.image(for: emotion))
+            let frames = try XCTUnwrap(image.images)
+            XCTAssertEqual(frames.count, 32)
+            XCTAssertEqual(image.duration, 4)
+            XCTAssertEqual(frames.first?.size, CGSize(width: 128, height: 128))
+            XCTAssertTrue(image === PalMascotFrames.image(for: emotion))
+            XCTAssertNotEqual(frames[0].pngData(), frames[12].pngData(), "The supplied engine blink must change the actual rendered face.")
+        }
+        XCTAssertTrue(PalMascotFrames.image(for: "unknown") === PalMascotFrames.image(for: "fier"))
+    }
+
+    @MainActor func testVisibleNativeAvatarsActuallyPlayAndRenderDifferentPixels() async throws {
+        guard !UIAccessibility.isReduceMotionEnabled else { throw XCTSkip("Reduce Motion intentionally keeps avatars still.") }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = try XCTUnwrap(scene.windows.first(where: \.isKeyWindow))
+        let previous = window.rootViewController
+        let host = UIHostingController(rootView: AnyView(VStack(spacing: 25) {
+            PalMascotAvatar(emotion: "fier", animated: true, size: 40)
+            PalMascotAvatar(emotion: "heureux", animated: true, size: 40)
+            PalMascotAvatar(emotion: "triste", animated: true, size: 40)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.white)
+            .environment(\.scenePhase, .active)))
+        window.rootViewController = host
+        defer { window.rootViewController = previous }
+        host.view.layoutIfNeeded(); window.layoutIfNeeded()
+        func players(_ view: UIView) -> [UIImageView] {
+            ((view as? UIImageView).map { [$0] } ?? []) + view.subviews.flatMap(players)
+        }
+        let deadline = Date().addingTimeInterval(3)
+        while players(host.view).filter({ $0.animationImages != nil }).count < 3, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let animated = players(host.view).filter { $0.animationImages != nil }
+        let screenshot = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) })
+        screenshot.name = "Mounted native mascot runtime"; screenshot.lifetime = .keepAlways; add(screenshot)
+        XCTAssertEqual(animated.count, 3, "Every visible avatar must reach the actual native frame player.")
+        XCTAssertTrue(animated.allSatisfy { $0.isAnimating && $0.window != nil && $0.bounds.width > 0 })
+        func pixels() -> [Data?] {
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+            return animated.map { view in
+                let rect = view.convert(view.bounds, to: window).insetBy(dx: -5, dy: -5)
+                let pixels = CGRect(x: rect.minX * image.scale, y: rect.minY * image.scale, width: rect.width * image.scale, height: rect.height * image.scale)
+                return image.cgImage?.cropping(to: pixels).flatMap { UIImage(cgImage: $0).pngData() }
+            }
+        }
+        let initial = pixels()
+        XCTAssertTrue(initial.allSatisfy { $0 != nil })
+        var changed = Array(repeating: false, count: animated.count)
+        for _ in 0..<32 {
+            try await Task.sleep(for: .milliseconds(125))
+            let current = pixels()
+            for index in changed.indices where current[index] != initial[index] { changed[index] = true }
+            if !changed.contains(false) { break }
+        }
+        XCTAssertEqual(changed, [true, true, true], "Every actual avatar, including fier's blink, must render changing on-screen pixels.")
+        host.rootView = AnyView(PalMascotAvatar(emotion: "fier", animated: true, size: 40)
+            .environment(\.scenePhase, .background))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(players(host.view).contains { $0.isAnimating }, "Backgrounding must stop actual native rendering.")
+    }
+
     @MainActor func testBundledPlayerRunsPausesTransfersAndDisposes() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previousWindow = scene.windows.first(where: \.isKeyWindow)

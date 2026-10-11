@@ -4,7 +4,7 @@ import { actionSourceKey, agentAction, batchSpeaker, jobScope, scopeId } from ".
 import { id, timezone, validateReminder } from "../../lib/validation";
 
 export default defineTool({
-  description: "Save one explicitly requested reminder for its verified speaker. Target members get a server reminder even after closing the app.",
+  description: "Save one explicitly requested reminder for its verified speaker. After success, confirm its actual purpose and local scheduled time in plain text. Target members get a server reminder even after closing the app.",
   inputSchema: z.object({
     source_message_id: id, body: z.string().trim().min(1).max(2000),
     due_at: z.string().datetime({ offset: true }), timezone,

@@ -64,6 +64,9 @@ struct RootView: View {
                     }
                 } catch { store.report(error) }
             }
+            .task(id: store.realtimeIdentity + ":" + String(describing: phase)) {
+                if phase == .active, store.isSignedIn { await store.runRealtime() }
+            }
             .onChange(of: phase) { _, value in
                 if value == .active, store.isSignedIn {
                     Task {
@@ -152,6 +155,7 @@ struct LoginView: View {
 
 struct GroupsView: View {
     @EnvironmentObject private var store: PalStore
+    @Environment(\.scenePhase) private var phase
     @State private var create = false
     @State private var join = false
     @State private var profile = false
@@ -159,13 +163,14 @@ struct GroupsView: View {
         NavigationStack(path: $store.path) {
             List {
                 if store.groups.isEmpty { ContentUnavailableView("No chats", systemImage: "bubble.left.and.bubble.right", description: Text("Create a group or join with an invite.")) }
-                ForEach(store.groups) { group in
+                ForEach(store.groups.filter(\.isDirect) + store.groups.filter { !$0.isDirect }) { group in
                     NavigationLink(value: group.id) {
                         HStack(spacing: 12) {
-                            AvatarView(name: group.name, url: group.avatarURL, size: 50)
+                            if group.isDirect { PalMascotAvatar(size: 50) }
+                            else { AvatarView(name: group.name, url: group.avatarURL, size: 50) }
                             VStack(alignment: .leading, spacing: 4) {
-                                HStack { Text(group.name).font(.headline); Spacer(); if let date = (group.lastMessage?.createdAt).flatMap(PalDate.date) { Text(date, style: .time).font(.caption).foregroundStyle(.secondary) } }
-                                HStack { Text(group.lastMessage?.body ?? "Start a conversation").font(.subheadline).foregroundStyle(.secondary).lineLimit(2); Spacer(); if let unread = group.unreadCount, unread > 0 { Text("\(unread)").font(.caption.bold()).foregroundStyle(PalTheme.onInk).padding(6).background(PalTheme.ink, in: Circle()).accessibilityLabel("\(unread) unread messages") } }
+                                HStack { Text(group.isDirect ? "Pal" : group.name).font(.headline); Spacer(); if let date = (group.lastMessage?.createdAt).flatMap(PalDate.date) { Text(date, style: .time).font(.caption).foregroundStyle(.secondary) } }
+                                HStack { Text(group.lastMessage?.body ?? (group.isDirect ? "Your private chat" : "Start a conversation")).font(.subheadline).foregroundStyle(.secondary).lineLimit(2); Spacer(); if let unread = group.unreadCount, unread > 0 { Text("\(unread)").font(.caption.bold()).foregroundStyle(PalTheme.onInk).padding(6).background(PalTheme.ink, in: Circle()).accessibilityLabel("\(unread) unread messages") } }
                             }
                         }.padding(.vertical, 5)
                     }.listRowSeparator(.hidden)
@@ -178,7 +183,10 @@ struct GroupsView: View {
                     ToolbarItem(placement: .topBarLeading) { Button { profile = true } label: { AvatarView(name: store.profile?.displayName ?? "Me", url: store.profile?.avatarURL) }.accessibilityLabel("Profile and settings") }
                     ToolbarItem(placement: .topBarTrailing) { Menu { Button("New group", systemImage: "square.and.pencil") { create = true }; Button("Join group", systemImage: "person.badge.plus") { join = true } } label: { Image(systemName: "square.and.pencil").accessibilityLabel("New chat") } }
                 }
-                .refreshable { await refresh() }.task { await refresh() }
+                .refreshable { await refresh() }.task(id: phase) {
+                    guard phase == .active else { return }
+                    while !Task.isCancelled { await refresh(); do { try await Task.sleep(for: .seconds(15)) } catch { break } }
+                }
                 .onChange(of: store.path) { _, path in if path.isEmpty { Task { await refresh() } } }
                 .sheet(isPresented: $profile) { NavigationStack { ProfileView() } }
                 .sheet(isPresented: $create) { GroupCreateView() }
@@ -193,7 +201,7 @@ struct ChatView: View {
     let group: ChatGroup
     @EnvironmentObject private var store: PalStore
     @Environment(\.scenePhase) private var phase
-    @State private var messages: [ChatMessage] = []
+    private var messages: [ChatMessage] { store.cachedMessages[group.id] ?? [] }
     @State private var draft = ""
     @State private var attachment: DraftAttachment?
     @State private var selectedPhoto: PhotosPickerItem?
@@ -209,24 +217,23 @@ struct ChatView: View {
     @State private var routeCard: MessageCard?
     @State private var pollingError: String?
     @State private var lastRead: UUID?
-    @State private var replyAnimation = PalReplyAnimationState()
-    @State private var speakingMessageID: UUID?
-    @State private var activityExpired = false
     private var state: GroupState { store.states[group.id] ?? .empty }
-    private var palThinking: Bool { !activityExpired && state.palActivity?.isThinking() == true }
     private var pending: [OutgoingMessage] { store.outgoing.filter { item in item.groupID == group.id && item.userID == store.userID && !messages.contains(where: { $0.clientID == item.clientID }) } }
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 transcript
             }.defaultScrollAnchor(.bottom).scrollDismissesKeyboard(.interactively).modifier(ChatScrollEdges())
-                .onChange(of: messages.last?.id) { _, id in if let id { proxy.scrollTo(id, anchor: .bottom) } }
+                .onChange(of: timeline.last?.id) { _, id in if let id { proxy.scrollTo(id, anchor: .bottom) } }
                 .safeAreaInset(edge: .bottom, spacing: 0) { composer }
-        }.navigationTitle(group.name).navigationBarTitleDisplayMode(.inline)
+        }.navigationTitle(group.isDirect ? "Pal" : group.name).navigationBarTitleDisplayMode(.inline)
             .modifier(ChatNavigationSurface())
             .toolbar {
-                ToolbarItem(placement: .principal) { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, url: group.avatarURL, size: 28); Text(group.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityLabel("Group details") }
-                ToolbarItem(placement: .topBarTrailing) { HStack { Button { calendar = true } label: { Image(systemName: "calendar") }.accessibilityLabel("Group calendar"); Button { map = true } label: { Image(systemName: "map") }.accessibilityLabel("Saved places") } }
+                ToolbarItem(placement: .principal) {
+                    if group.isDirect { HStack(spacing: 8) { PalMascotAvatar(size: 28); Text("Pal").font(.headline) } }
+                    else { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, url: group.avatarURL, size: 28); Text(group.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityLabel("Group details") }
+                }
+                if !group.isDirect { ToolbarItem(placement: .topBarTrailing) { HStack { Button { calendar = true } label: { Image(systemName: "calendar") }.accessibilityLabel("Group calendar"); Button { map = true } label: { Image(systemName: "map") }.accessibilityLabel("Saved places") } } }
             }
             .photosPicker(isPresented: $showingPhotos, selection: $selectedPhoto, matching: .images)
             .fullScreenCover(isPresented: $showingCamera) { CameraCapture(onCapture: { data in Task { await preparePhoto(data) } }, onError: { store.report($0) }) }
@@ -243,39 +250,41 @@ struct ChatView: View {
             .navigationDestination(isPresented: $calendar) { GroupCalendarView(group: group) }
             .navigationDestination(isPresented: $map) { GroupMapView(group: group) }
             .sheet(item: $routeCard) { card in NavigationStack { PalCardView(group: group, card: card).padding().navigationTitle("Details").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { routeCard = nil } } } } }
-            .onChange(of: store.requestedEntity) { _, card in if let card { routeCard = card; store.requestedEntity = nil } }
+            .onChange(of: store.requestedEntity) { _, card in if let card { if !["choice", "availability"].contains(card.type) { routeCard = card }; store.requestedEntity = nil } }
             .task(id: phase) {
-                speakingMessageID = nil
-                replyAnimation.resume()
                 guard phase == .active else { return }
-                if let card = store.requestedEntity { routeCard = card; store.requestedEntity = nil }
+                if let card = store.requestedEntity { if !["choice", "availability"].contains(card.type) { routeCard = card }; store.requestedEntity = nil }
                 while !Task.isCancelled { await refresh(); do { try await Task.sleep(for: .seconds(2)) } catch { break } }
             }
-            .task(id: speakingMessageID) {
-                guard let id = speakingMessageID else { return }
-                do { try await Task.sleep(for: .milliseconds(1500)); if speakingMessageID == id { speakingMessageID = nil } } catch { }
-            }
-            .task(id: state.palActivity?.expiresAt) {
-                activityExpired = false
-                guard let expiry = state.palActivity?.expiresAt.flatMap(PalDate.date) else { return }
-                let delay = expiry.timeIntervalSinceNow
-                guard delay > 0 else { activityExpired = true; return }
-                do { try await Task.sleep(for: .seconds(delay)); activityExpired = true } catch { }
-            }
+    }
+    private var timeline: [ChatTimelineItem] {
+        (messages.map(ChatTimelineItem.message) + pending.map(ChatTimelineItem.outgoing)).sorted {
+            let left = PalDate.date($0.createdAt) ?? .distantFuture
+            let right = PalDate.date($1.createdAt) ?? .distantFuture
+            return left == right ? $0.id.uuidString < $1.id.uuidString : left < right
+        }
     }
     private var transcript: some View {
         LazyVStack(spacing: 9) {
-            if messages.isEmpty { VStack(spacing: 12) { PalMascotAvatar(size: 54).accessibilityHidden(true); Text("No messages yet").font(.subheadline).foregroundStyle(.secondary) }.padding(.horizontal, 28).padding(.top, 36) }
-            ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                timelineRow(message, at: index)
-            }
-            ForEach(pending) { item in
-                HStack { Spacer(minLength: 44); VStack(alignment: .trailing, spacing: 4) { if let media = item.attachment { DraftMediaPreview(draft: media, onRemove: nil) }; if !item.body.isEmpty { Text(item.body).padding(12).foregroundStyle(PalTheme.onInk).background(PalTheme.ink.opacity(0.6), in: RoundedRectangle(cornerRadius: 20)) }; if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(.red).frame(minHeight: 44) } } }.id(item.id)
-            }
-            if palThinking {
-                HStack(spacing: 8) { PalMascotAvatar(activity: .thinking, animated: phase == .active, size: 40).accessibilityHidden(true); Text("Pal is thinking…").font(.caption).foregroundStyle(.secondary); Spacer() }.padding(.top, 4).accessibilityElement(children: .combine)
+            if timeline.isEmpty, store.cachedMessages[group.id] != nil { VStack(spacing: 12) { PalMascotAvatar(size: 54).accessibilityHidden(true); Text("No messages yet").font(.subheadline).foregroundStyle(.secondary) }.padding(.horizontal, 28).padding(.top, 36) }
+            ForEach(Array(timeline.enumerated()), id: \.element.id) { index, item in
+                let previous = index > 0 ? timeline[index - 1] : nil
+                if PalDate.date(item.createdAt) != nil, (previous?.createdAt).flatMap(day) != day(item.createdAt) {
+                    Text(PalDate.date(item.createdAt)?.formatted(date: .abbreviated, time: .shortened) ?? "").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.vertical, 10)
+                }
+                switch item {
+                case .message(let message): messageRow(message, showSender: previous?.message.map { !message.follows($0) } ?? true)
+                case .outgoing(let outgoing): pendingRow(outgoing)
+                }
             }
         }.padding(16)
+    }
+    private func pendingRow(_ item: OutgoingMessage) -> some View {
+        HStack { Spacer(minLength: 44); VStack(alignment: .trailing, spacing: 4) {
+            if let media = item.attachment { DraftMediaPreview(draft: media, onRemove: nil) }
+            if !item.body.isEmpty { Text(PalText.linked(item.body)).tint(PalTheme.accentOnInk).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(PalTheme.onInk).background(PalTheme.ink, in: RoundedRectangle(cornerRadius: 20)) }
+            if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(.red).frame(minHeight: 44) }
+        } }
     }
     private var composer: some View {
         VStack(spacing: 8) {
@@ -289,7 +298,7 @@ struct ChatView: View {
                     Button("Camera", systemImage: "camera") { showingCamera = true }
                     Button("Audio", systemImage: "waveform") { showingAudio = true }
                 } label: { Image(systemName: "plus").font(.title3.weight(.medium)).frame(width: 44, height: 44).foregroundStyle(.primary).modifier(PalGlass(cornerRadius: 22)) }.accessibilityLabel("Add attachment").disabled(processingPhoto)
-                TextField("Message", text: $draft, axis: .vertical).font(.body).lineLimit(1...5).padding(12).modifier(PalGlass(cornerRadius: 25)).accessibilityLabel("Message")
+                TextField(group.isDirect ? "Message Pal" : "Message", text: $draft, axis: .vertical).font(.body).lineLimit(1...5).padding(12).modifier(PalGlass(cornerRadius: 25)).accessibilityLabel(group.isDirect ? "Message Pal" : "Message")
                 PalSendButton(disabled: processingPhoto || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachment == nil), action: sendDraft)
             }.padding(.horizontal, 15).padding(.bottom, 10)
         }
@@ -314,30 +323,22 @@ struct ChatView: View {
         if let attachment { try? AttachmentFiles.remove(attachment) }
         attachment = nil
     }
-    @ViewBuilder private func timelineRow(_ message: ChatMessage, at index: Int) -> some View {
-        let previous = index > 0 ? messages[index - 1] : nil
-        let newDay = previous.map { day(message.createdAt) != day($0.createdAt) } ?? true
-        if newDay { Text(PalDate.date(message.createdAt)?.formatted(date: .abbreviated, time: .shortened) ?? "").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.vertical, 10) }
-        messageRow(message, showSender: previous.map { !message.follows($0) } ?? true).id(message.id)
-    }
     private func day(_ value: String) -> Date? { PalDate.date(value).map { Calendar.current.startOfDay(for: $0) } }
     private func memberName(_ message: ChatMessage) -> String { message.role == "pal" ? "Pal" : (state.members.first { $0.userID == message.senderID }?.displayName ?? (message.senderID == store.userID ? "You" : "Member")) }
     @ViewBuilder private func messageRow(_ message: ChatMessage, showSender: Bool) -> some View {
         let mine = message.senderID == store.userID && message.role == "user"
         if message.role == "system" {
-            if let body = message.displayedBody(in: state) { Text(body).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.horizontal, 18).padding(.vertical, 6) }
-            ForEach(message.cards) { PalCardView(group: group, card: $0) }
+            if let body = message.plainBody(in: state) { Text(body).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.horizontal, 18).padding(.vertical, 6) }
         } else { HStack(alignment: .bottom, spacing: 7) {
             if mine { Spacer(minLength: 44) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
-                if !mine && (showSender || message.role == "pal") { HStack(spacing: 6) { if message.role == "pal" { PalMascotAvatar(emotion: message.emotion, activity: speakingMessageID == message.id ? .speaking : .idle, animated: speakingMessageID == message.id && !palThinking && phase == .active, size: 40).accessibilityHidden(true) }; Text(memberName(message)).font(.caption).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5) }
+                if !mine && (showSender || message.role == "pal") { HStack(spacing: 6) { if message.role == "pal" { PalMascotAvatar(emotion: message.emotion, animated: phase == .active, size: 40).accessibilityHidden(true) }; Text(memberName(message)).font(.caption).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5) }
                 if let replyID = message.replyToID, let original = messages.first(where: { $0.id == replyID }) { Text("\(memberName(original)): \(original.body)").font(.caption).lineLimit(2).foregroundStyle(.secondary).padding(8).background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10)) }
-                if let body = message.displayedBody(in: state) {
-                    Text(PalText.linked(body)).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+                if let body = message.plainBody(in: state) {
+                    Text(PalText.linked(body, markdown: message.role == "pal")).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                         .contextMenu { messageMenu(message, mine: mine) }
                 }
                 ForEach(message.attachments) { media in MessageAttachmentView(attachment: media, onRetry: { Task { await refresh() } }).contextMenu { messageMenu(message, mine: mine) } }
-                ForEach(message.cards) { PalCardView(group: group, card: $0).contextMenu { messageMenu(message, mine: mine) } }
                 let reactions = state.reactions.filter { $0.messageID == message.id }
                 if !reactions.isEmpty { HStack(spacing: 4) { ForEach(Array(Set(reactions.map(\.emoji))).sorted(), id: \.self) { emoji in let count = reactions.filter { $0.emoji == emoji }.count; let selected = reactions.contains { $0.emoji == emoji && $0.userID == store.userID }; Button { react(emoji, to: message) } label: { Text("\(emoji) \(count)").font(.caption).padding(.horizontal, 9).padding(.vertical, 5).background(selected ? PalTheme.ink.opacity(0.12) : Color(uiColor: .tertiarySystemFill), in: Capsule()) }.buttonStyle(.plain).frame(minHeight: 44).accessibilityLabel("\(emoji), \(count) reactions").accessibilityValue(selected ? "You reacted" : "").accessibilityHint(selected ? "Remove your reaction" : "Add your reaction") } } }
             }
@@ -361,9 +362,6 @@ struct ChatView: View {
         do {
             let loaded = try await store.messages(in: group)
             try Task.checkCancellation()
-            store.reconcileOutgoing(with: loaded)
-            speakingMessageID = replyAnimation.receive(loaded) ?? speakingMessageID
-            messages = loaded
             try await store.loadState(group)
             if let id = loaded.last?.id, lastRead != id, phase == .active {
                 try await store.mutate(group, action: "group.read", data: ["message_id": .string(id.uuidString)])

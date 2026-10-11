@@ -18,7 +18,7 @@ The project uses Kardomo Inc. team `6GAAMYMS72`. The Apple portal capability for
 
 The user interface exposes only Sign in with Apple. Email/password authentication remains an internal helper for the opt-in live fixture test, with credentials supplied through an ignored test-run configuration. An existing simulator demo session remains usable while a real Apple account sign-in is checked.
 
-Chat refreshes every two seconds while foregrounded. The server owns reminder execution, so closing the app does not cancel a reminder; reopening the chat retrieves its delivered message. The native app registers APNs tokens after permission is granted, and routes notification taps to a group and its card. The connected iPhone received a real sandbox reminder while Pal was closed, and its notification opened the correct group.
+Authenticated Realtime refreshes group messages and shared state while foregrounded, with two-second polling as recovery. The server owns reminder execution, so closing the app does not cancel a reminder; reopening the chat retrieves its delivered message. The native app registers APNs tokens after permission is granted, and routes notification taps to a group and its card. The connected iPhone received a real sandbox reminder while Pal was closed, and its notification opened the correct group.
 
 Regenerate after changing `project.yml` with `xcodegen generate`. Check with:
 
@@ -27,7 +27,7 @@ xcodebuild test -project Pal.xcodeproj -scheme Pal -destination 'platform=iOS Si
 ```
 
 
-The app includes profiles, unread counts, replies, reactions, a persistent message outbox, group polls and memories, a month/day calendar, plan RSVP and reservation status, reminder editing, and a MapKit view of saved places. Place search uses the authenticated backend and saves verified Apple Maps IDs; shared-link cards retain video evidence and offer branch selection. Group-member location tracking is not included.
+The app includes profiles, unread counts, replies, reactions, a persistent message outbox, a month/day calendar, plan RSVP and reservation status, reminder editing, and a MapKit view of saved places. Pal remembers explicit group context through server tools; manual memory and poll interfaces are hidden. Place search uses the authenticated backend and saves verified Apple Maps IDs; chat describes shared-link results in text while the persisted source retains evidence. Group-member location tracking is not included.
 
 The embedded Share extension accepts text and web links from the iOS share sheet, lets the signed-in user choose a real group, and closes only after the server accepts the message. The app and extension share the session through `$(AppIdentifierPrefix)com.pal.spike.shared`. The app retains its original Keychain entitlement to migrate existing sessions, without deleting the old session on a failed migration. Enable App Groups (`group.com.pal.spike`), Keychain Sharing, Push Notifications, and Associated Domains for the app, and App Groups plus Keychain Sharing for `com.pal.spike.Share`, then refresh provisioning profiles. Root deployment owns this portal setup.
 
@@ -43,4 +43,10 @@ A physical Debug build is signed with the Kardomo team and installed on the conn
 
 The composer supports one photo or AAC voice message, with a preview before sending and durable retry using the original bytes and client ID. Audio recordings stop at 59 seconds. Files remain private; authorized group members receive expiring signed URLs. Group creation can save a shared photo atomically, and joining supports QR scanning or a pasted invite. Profile and group avatar menus offer Camera or Photo Library.
 
-Pal uses the supplied orange cloud expressions, with `fier` as the default. Historical replies are static. A future server job lease controls thinking; newly received replies animate briefly once. The local bundled player is limited to one active avatar, pauses offscreen or in the background, and uses static artwork with Reduce Motion. Manual group settings and memory/poll creation controls are omitted from the demo; existing decision and plan cards retain their actions.
+Pal uses the supplied orange cloud expressions, with `fier` as the default. Manual group settings and memory/poll creation controls are omitted from the demo. Existing plans and places remain available in Calendar and Map.
+
+The private Pal room appears first in Chats and reuses the chat composer without group invite, Map, or Calendar controls. The server owns the private room and its authorized context. A static cloud launch screen transitions with a brief native fade while normal loading proceeds; Reduce Motion skips that transition.
+
+Chat is text-first: persisted legacy cards appear as readable text. Chat-list loading prefetches unknown history with at most two requests at once; the empty-state label waits for a confirmed server response. Messages are cached across navigation and reconciled by their client UUID before durable drafts are removed. Authenticated Supabase Realtime invalidates the authorized API cache for messages and shared state; two-second chat and fifteen-second list refreshes remain a fallback. No processing/typing indicator is shown before an actual Pal reply.
+
+Every visible Pal reply animates its stored emotion using shared native frames sampled from the supplied engine and its original emotion-specific body movements. Offscreen, background and Reduce Motion avatars are still. Twelve cached emotions use at most approximately 24 MiB of decoded frames; the bundled PNG payload is under 1 MB. Private Pal chat is pinned above groups, and launch uses the same static mascot with a short native entrance.

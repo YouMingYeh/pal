@@ -37,7 +37,6 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: Pal
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         PAL_APNS_ENVIRONMENT: development
         PAL_PUSH_ENVIRONMENT: sandbox
@@ -54,6 +53,7 @@ targets:
         PalAPIURL: $(PAL_API_URL)
         PalKeychainAccessGroup: $(AppIdentifierPrefix)com.pal.spike.shared
         PalPushEnvironment: $(PAL_PUSH_ENVIRONMENT)
+        UILaunchStoryboardName: LaunchScreen
         NSCameraUsageDescription: Take a photo for a chat or scan a group invite.
         NSMicrophoneUsageDescription: Record a voice message to send to your group.
         CFBundleURLTypes:
