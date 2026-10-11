@@ -11,7 +11,7 @@ final class MascotTests: XCTestCase {
             XCTAssertEqual(frames.count, 126)
             XCTAssertEqual(image.duration, 7.875)
             XCTAssertEqual(frames.first?.size, CGSize(width: 192, height: 192))
-            XCTAssertGreaterThanOrEqual(try XCTUnwrap(frames.first?.cgImage).width, 126, "A 42-point frame must stay crisp on a 3× display.")
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(frames.first?.cgImage).width, 144, "A 48-point frame must stay crisp on a 3× display.")
             XCTAssertGreaterThanOrEqual(try XCTUnwrap(UIImage(named: "PalMascot-" + emotion)?.cgImage).width, 432, "The 96-point launch/login mascot must also avoid 3× upsampling.")
             XCTAssertTrue(image === PalMascotFrames.image(for: emotion))
             XCTAssertTrue(frames.last === frames[1], "The loop returns through adjacent actual samples, rather than jumping from four seconds to zero.")
@@ -27,9 +27,9 @@ final class MascotTests: XCTestCase {
         let window = try XCTUnwrap(scene.windows.first(where: \.isKeyWindow))
         let previous = window.rootViewController
         let host = UIHostingController(rootView: AnyView(VStack(spacing: 25) {
-            PalMascotAvatar(emotion: "fier", animated: true, size: 28)
-            PalMascotAvatar(emotion: "heureux", animated: true, size: 28)
-            PalMascotAvatar(emotion: "triste", animated: true, size: 28)
+            PalMascotAvatar(emotion: "fier", animated: true, size: 32)
+            PalMascotAvatar(emotion: "heureux", animated: true, size: 32)
+            PalMascotAvatar(emotion: "triste", animated: true, size: 32)
             PalMascotAvatar(emotion: "curieux", animated: true, size: 40)
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.white)
             .environment(\.scenePhase, .active)))
@@ -47,7 +47,7 @@ final class MascotTests: XCTestCase {
         let screenshot = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) })
         screenshot.name = "Mounted native mascot runtime"; screenshot.lifetime = .keepAlways; add(screenshot)
         XCTAssertEqual(animated.count, 4, "Every visible avatar must reach the actual native frame player.")
-        for (player, expected) in zip(animated, [42.0, 42.0, 42.0, 60.0]) {
+        for (player, expected) in zip(animated, [48.0, 48.0, 48.0, 60.0]) {
             XCTAssertEqual(player.bounds.width, expected, accuracy: 0.1, "The actual UIKit canvas must honor the SwiftUI avatar width.")
             XCTAssertEqual(player.bounds.height, expected, accuracy: 0.1, "The actual UIKit canvas must honor the SwiftUI avatar height.")
         }
@@ -70,7 +70,7 @@ final class MascotTests: XCTestCase {
             if !changed.contains(false) { break }
         }
         XCTAssertEqual(changed, [true, true, true, true], "Every actual avatar, including fier's blink, must render changing on-screen pixels.")
-        host.rootView = AnyView(PalMascotAvatar(emotion: "fier", animated: true, size: 28)
+        host.rootView = AnyView(PalMascotAvatar(emotion: "fier", animated: true, size: 32)
             .environment(\.scenePhase, .background))
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(players(host.view).contains { $0.isAnimating }, "Backgrounding must stop actual native rendering.")

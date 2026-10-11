@@ -49,12 +49,12 @@ private struct PalSendButton: View {
 struct PalTypingLane: View {
     var visible: Bool
     var animated: Bool
-    @ScaledMetric(relativeTo: .caption) private var height: CGFloat = 28
+    @ScaledMetric(relativeTo: .body) private var height: CGFloat = 40
     var body: some View {
         HStack(spacing: 6) {
             if visible {
-                PalMascotAvatar(emotion: "attentif", animated: animated, size: 24)
-                Text("Pal is typing…").font(.caption).foregroundStyle(.secondary)
+                PalMascotAvatar(emotion: "attentif", animated: animated, size: 32)
+                Text("Pal is typing…").font(.body).foregroundStyle(.secondary)
             }
             Spacer()
         }.frame(height: height).accessibilityElement(children: .combine).accessibilityHidden(!visible)
@@ -246,8 +246,8 @@ struct ChatView: View {
             .modifier(ChatNavigationSurface())
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    if group.isDirect { HStack(spacing: 8) { PalMascotAvatar(size: 28); Text("Pal").font(.headline) } }
-                    else { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, url: group.avatarURL, size: 28); Text(group.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityLabel("Group details") }
+                    if group.isDirect { HStack(spacing: 8) { PalMascotAvatar(size: 32); Text("Pal").font(.title3.weight(.semibold)) } }
+                    else { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, url: group.avatarURL, size: 32); Text(group.name).font(.title3.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityLabel("Group details") }
                 }
                 if !group.isDirect { ToolbarItem(placement: .topBarTrailing) { HStack { Button { calendar = true } label: { Image(systemName: "calendar") }.accessibilityLabel("Group calendar"); Button { map = true } label: { Image(systemName: "map") }.accessibilityLabel("Saved places") } } }
             }
@@ -304,7 +304,7 @@ struct ChatView: View {
     private func pendingRow(_ item: OutgoingMessage) -> some View {
         HStack { Spacer(minLength: 44); VStack(alignment: .trailing, spacing: 4) {
             if let media = item.attachment { DraftMediaPreview(draft: media, onRemove: nil) }
-            if !item.body.isEmpty { Text(PalText.linked(item.body)).tint(PalTheme.accentOnInk).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(PalTheme.onInk).background(PalTheme.ink, in: RoundedRectangle(cornerRadius: 20)) }
+            if !item.body.isEmpty { Text(PalText.linked(item.body)).font(.title3).tint(PalTheme.accentOnInk).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(PalTheme.onInk).background(PalTheme.ink, in: RoundedRectangle(cornerRadius: 20)) }
             if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(.red).frame(minHeight: 44) }
         } }
     }
@@ -323,7 +323,7 @@ struct ChatView: View {
                     Button("Camera", systemImage: "camera") { showingCamera = true }
                     Button("Audio", systemImage: "waveform") { showingAudio = true }
                 } label: { Image(systemName: "plus").font(.title3.weight(.medium)).frame(width: 44, height: 44).foregroundStyle(.primary).modifier(PalGlass(cornerRadius: 22)) }.accessibilityLabel("Add attachment").disabled(processingPhoto)
-                TextField(group.isDirect ? "Message Pal" : "Message", text: $draft, axis: .vertical).font(.body).lineLimit(1...5).padding(12).modifier(PalGlass(cornerRadius: 25)).accessibilityLabel(group.isDirect ? "Message Pal" : "Message")
+                TextField(group.isDirect ? "Message Pal" : "Message", text: $draft, axis: .vertical).font(.title3).lineLimit(1...5).padding(12).modifier(PalGlass(cornerRadius: 25)).accessibilityLabel(group.isDirect ? "Message Pal" : "Message")
                 PalSendButton(disabled: processingPhoto || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachment == nil), action: sendDraft)
             }.padding(.horizontal, 15).padding(.bottom, 10)
         }
@@ -357,10 +357,10 @@ struct ChatView: View {
         } else { HStack(alignment: .bottom, spacing: 7) {
             if mine { Spacer(minLength: 44) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
-                if !mine && (showSender || message.role == "pal") { HStack(spacing: 6) { if message.role == "pal" { PalMascotAvatar(emotion: message.emotion, animated: phase == .active, size: 28).accessibilityHidden(true) } else { AvatarView(name: memberName(message), url: state.members.first { $0.userID == message.senderID }?.avatarURL, size: 24).accessibilityHidden(true) }; Text(memberName(message)).font(.caption).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5) }
+                if !mine && (showSender || message.role == "pal") { HStack(spacing: 6) { if message.role == "pal" { PalMascotAvatar(emotion: message.emotion, animated: phase == .active, size: 32).accessibilityHidden(true) } else { AvatarView(name: memberName(message), url: state.members.first { $0.userID == message.senderID }?.avatarURL, size: 32).accessibilityHidden(true) }; Text(memberName(message)).font(.body.weight(.medium)).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5) }
                 if let replyID = message.replyToID, let original = messages.first(where: { $0.id == replyID }) { Text("\(memberName(original)): \(original.body)").font(.caption).lineLimit(2).foregroundStyle(.secondary).padding(8).background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10)) }
                 if let body = message.plainBody(in: state) {
-                    Text(PalText.linked(body, markdown: message.role == "pal")).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+                    Text(PalText.linked(body, markdown: message.role == "pal")).font(.title3).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                         .contextMenu { messageMenu(message, mine: mine) }
                 }
                 ForEach(message.attachments) { media in MessageAttachmentView(attachment: media, onRetry: { Task { await refresh() } }).contextMenu { messageMenu(message, mine: mine) } }
