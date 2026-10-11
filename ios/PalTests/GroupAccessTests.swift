@@ -22,4 +22,15 @@ final class GroupAccessTests: XCTestCase {
         XCTAssertTrue(PalGroupAccess.validName(String(repeating: "🐾", count: 40)))
         XCTAssertFalse(PalGroupAccess.validName(String(repeating: "🐾", count: 41)))
     }
+    func testPalAvatarNavigationReusesTheExistingPrivateChatAndKeepsBackNavigation() throws {
+        let groupID = UUID(), palID = UUID()
+        let shared = try JSONDecoder().decode(ChatGroup.self, from: JSONSerialization.data(withJSONObject: ["id": groupID.uuidString, "name": "Friends", "is_direct": false]))
+        let pal = try JSONDecoder().decode(ChatGroup.self, from: JSONSerialization.data(withJSONObject: ["id": palID.uuidString, "name": "Pal", "is_direct": true]))
+        XCTAssertEqual(PalChatNavigation.path(in: [shared, pal], from: [groupID]), [groupID, palID], "Back returns to the group that opened Pal.")
+        XCTAssertEqual(PalChatNavigation.path(in: [shared, pal], from: [groupID, palID]), [groupID, palID], "Tapping Pal in the DM cannot push another copy.")
+        XCTAssertEqual(PalChatNavigation.path(in: [shared, pal], from: [palID, groupID]), [palID], "An existing DM is reused in the navigation stack.")
+        XCTAssertNil(PalChatNavigation.path(in: [shared], from: [groupID]), "Missing private chat refreshes the existing inbox instead of creating a group.")
+        XCTAssertNil(PalChatNavigation.path(in: [], from: []))
+    }
+
 }

@@ -1,7 +1,48 @@
 import XCTest
+import SwiftUI
 @testable import Pal
 
 final class ConversationTests: XCTestCase {
+    func testHangoutIdeasMergeDuplicatePlaceSourcesAndKeepUninspectedLinksAndActivities() {
+        let placeID = UUID(), firstSourceID = UUID(), secondSourceID = UUID(), pendingID = UUID(), member = UUID()
+        let place = GroupPlace(id: placeID, name: "Cafe", address: "Mission", provider: "apple", status: "resolved", candidates: [], contributors: [PlaceContributor(userID: member, sourceID: secondSourceID)])
+        let first = GroupSource(id: firstSourceID, url: "https://www.instagram.com/reel/first", title: "Cafe reel", status: "resolved", placeID: placeID, metadata: ["thumbnail_url": .string("https://example.com/cafe.jpg")])
+        let second = GroupSource(id: secondSourceID, url: "https://www.tiktok.com/@cafe/video/second", status: "resolved")
+        let pending = GroupSource(id: pendingID, url: "https://www.instagram.com/reel/pending", status: "pending")
+        var state = GroupState.empty
+        state.places = [place]
+        state.sources = [first, second, pending]
+        state.polls = [GroupPoll(id: UUID(), kind: "place", question: "Weekend ideas", options: [PollOption(id: "saved", label: "Cafe", placeID: placeID), PollOption(id: "walk", label: "A beach walk"), PollOption(id: "duplicate", label: "a beach walk")], status: "open", votes: [])]
+        let ideas = HangoutIdea.saved(in: state)
+        XCTAssertEqual(ideas.count, 3)
+        let cafe = ideas.first { $0.place?.id == placeID }
+        XCTAssertEqual(cafe?.sources.map(\.id), [firstSourceID, secondSourceID], "One place retains both original links, including contributor-linked sources.")
+        XCTAssertEqual(cafe?.thumbnail?.absoluteString, "https://example.com/cafe.jpg")
+        XCTAssertTrue(ideas.contains { $0.sources.first?.id == pendingID }, "A pending link is still browsable before extraction completes.")
+        XCTAssertEqual(ideas.filter { $0.sources.isEmpty && $0.place == nil }.map(\.title), ["A beach walk"])
+        XCTAssertTrue(HangoutIdea.saved(in: .empty).isEmpty)
+    }
+
+    func testBareMentionListsAllOtherMembersAndTypingNarrowsTheSameList() throws {
+        let owner = UUID(), amy = UUID(), ben = UUID(), ronny = UUID()
+        let members = [GroupMember(userID: owner, displayName: "Me"), GroupMember(userID: amy, displayName: "Amy Chen"), GroupMember(userID: ben, displayName: "Ben"), GroupMember(userID: ronny, displayName: "Ronny Yen")]
+        let bare = try XCTUnwrap(PalMentions.query(in: "Hey @"))
+        XCTAssertEqual(PalMentions.candidates(in: members, query: bare, excluding: owner).map(\.userID), [amy, ben, ronny])
+        XCTAssertEqual(PalMentions.candidates(in: members, query: "yEn", excluding: owner).map(\.userID), [ronny])
+        XCTAssertTrue(PalMentions.candidates(in: [], query: bare, excluding: owner).isEmpty)
+    }
+    func testProcessedReelUsesExtractedVenueAndFoodInsteadOfRawURL() throws {
+        let sourceJSON: [String: Any] = ["id": UUID().uuidString, "url": "https://www.instagram.com/reel/abc", "title": "You have to try this", "status": "needs_confirmation", "candidates": [["name": "Cafe Luna", "city": "San Francisco", "dishes": ["Mushroom toast"], "prices": ["$14"], "evidence": ["Cafe Luna appears on screen"]]]]
+        let source = try JSONDecoder().decode(GroupSource.self, from: JSONSerialization.data(withJSONObject: sourceJSON))
+        var state = GroupState.empty
+        state.sources = [source]
+        let idea = try XCTUnwrap(HangoutIdea.saved(in: state).first)
+        XCTAssertEqual(idea.title, "Cafe Luna")
+        XCTAssertEqual(idea.subtitle, "San Francisco · Mushroom toast")
+        XCTAssertEqual(idea.sources.first?.url, "https://www.instagram.com/reel/abc", "The original remains provenance in the details.")
+        XCTAssertEqual(idea.sources.first?.candidates?.first?.evidence, ["Cafe Luna appears on screen"])
+    }
+
     func testMentionsCompleteNamesAndDiscardEditedTargets() {
         let amy = MessageMention(type: "user", userID: UUID())
         let pal = MessageMention(type: "pal")
@@ -153,6 +194,67 @@ final class ConversationTests: XCTestCase {
         pending.failed = true
         XCTAssertNotEqual(before, ChatTranscriptSource(messages: [first], pending: [pending]))
         XCTAssertNotEqual(source, ChatTranscriptSource(messages: [], pending: []), "Logout and authoritative cleared history drop cached transcript rows.")
+    }
+
+    @MainActor func testReadOnlyInspirationAndPlanControlsExpandForAccessibleText() {
+        let option = PollOption(id: "one", label: "Dinner and a walk by the waterfront with the whole group")
+        let normal = UIHostingController(rootView: InspirationTile(option: option, place: nil, thumbnail: nil).environment(\.dynamicTypeSize, .large))
+        let large = UIHostingController(rootView: InspirationTile(option: option, place: nil, thumbnail: nil).environment(\.dynamicTypeSize, .accessibility3))
+        let bounds = CGSize(width: 300, height: 10000)
+        let normalSize = normal.sizeThatFits(in: bounds), largeSize = large.sizeThatFits(in: bounds)
+        XCTAssertGreaterThan(normalSize.height, 40)
+        XCTAssertGreaterThan(largeSize.height, normalSize.height, "Inspiration grows rather than clipping accessible text.")
+        XCTAssertLessThanOrEqual(largeSize.width, 260.5, "The carousel tile stays inside the message width.")
+        let normalRSVP = UIHostingController(rootView: RSVPButtons(selected: "going", busy: false, action: { _ in }).environment(\.dynamicTypeSize, .large))
+        let largeRSVP = UIHostingController(rootView: RSVPButtons(selected: "going", busy: false, action: { _ in }).environment(\.dynamicTypeSize, .accessibility3))
+        XCTAssertGreaterThan(largeRSVP.sizeThatFits(in: bounds).height, normalRSVP.sizeThatFits(in: bounds).height, "RSVP buttons stack at accessible text sizes.")
+    }
+    func testInlineQuestionKeepsScopeAndQuotedMessageIdentitySeparate() throws {
+        let groupID = UUID(), sourceID = UUID()
+        let question = "Friday or Saturday?"
+        let json: [String: Any] = ["id": sourceID.uuidString, "group_id": groupID.uuidString, "role": "pal", "body": question, "created_at": "2026-10-11T20:00:00Z", "cards": [["type": "question", "entity_id": groupID.uuidString, "question": question, "suggestions": ["Friday", "Saturday", "Either works"]]]]
+        let message = try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: json))
+        let card = try XCTUnwrap(message.cards.first)
+        XCTAssertEqual(card.questionText(for: groupID), question)
+        XCTAssertEqual(card.suggestedAnswers, ["Friday", "Saturday", "Either works"])
+        XCTAssertNotEqual(message.id, card.entityID, "Answer replies use the delivered message ID, not the group scope UUID.")
+        XCTAssertNil(message.plainBody(in: .empty), "The question appears once in its card.")
+        let roundTrip = try JSONDecoder().decode(MessageCard.self, from: JSONEncoder().encode(card))
+        XCTAssertEqual(roundTrip, card)
+        XCTAssertNil(card.questionText(for: UUID()), "A question from another group does not render.")
+    }
+
+    func testQuestionSuggestionsValidateBoundsAndRetainOrdinaryTextFallback() throws {
+        let groupID = UUID()
+        var card = MessageCard(type: "question", entityID: groupID, question: " Dinner? ", suggestions: [" Yes ", "No"])
+        XCTAssertEqual(card.questionText(for: groupID), "Dinner?")
+        XCTAssertEqual(card.suggestedAnswers, ["Yes", "No"])
+        for suggestions in [["Yes"], ["Yes", "Yes"], ["Yes", "YES"], ["Yes", " "], ["Yes", String(repeating: "x", count: 61)], ["1", "2", "3", "4", "5"]] {
+            card.suggestions = suggestions
+            XCTAssertNil(card.questionText(for: groupID))
+        }
+        card.suggestions = ["Yes", "No"]; card.question = String(repeating: "x", count: 201)
+        XCTAssertNil(card.questionText(for: groupID))
+        let json: [String: Any] = ["id": UUID().uuidString, "group_id": groupID.uuidString, "role": "pal", "body": "Dinner?", "created_at": "2026-10-11T20:00:00Z", "cards": [["type": "question", "entity_id": groupID.uuidString, "question": "Dinner?", "suggestions": ["Yes"]]]]
+        let message = try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(message.plainBody(in: .empty), "Dinner?", "An unsupported card never removes its readable message.")
+        let legacy = try JSONDecoder().decode(MessageCard.self, from: JSONSerialization.data(withJSONObject: ["type": "plan", "entity_id": UUID().uuidString]))
+        XCTAssertNil(legacy.question)
+        XCTAssertNil(legacy.suggestions)
+    }
+
+    @MainActor func testSuggestedAnswerChipsExpandForAccessibleText() throws {
+        let groupID = UUID()
+        let group = try JSONDecoder().decode(ChatGroup.self, from: JSONSerialization.data(withJSONObject: ["id": groupID.uuidString, "name": "Dinner"]))
+        let card = MessageCard(type: "question", entityID: groupID, question: "What kind of dinner sounds good?", suggestions: ["Korean barbecue", "Italian", "Vegetarian", "Anything works"])
+        let store = PalStore(), source = UUID()
+        let normal = UIHostingController(rootView: QuestionCardView(group: group, card: card, sourceMessageID: source).environmentObject(store).environment(\.dynamicTypeSize, .large))
+        let large = UIHostingController(rootView: QuestionCardView(group: group, card: card, sourceMessageID: source).environmentObject(store).environment(\.dynamicTypeSize, .accessibility3))
+        let bounds = CGSize(width: 270, height: 10000)
+        let normalSize = normal.sizeThatFits(in: bounds), largeSize = large.sizeThatFits(in: bounds)
+        XCTAssertGreaterThan(normalSize.height, 80)
+        XCTAssertGreaterThan(largeSize.height, normalSize.height, "Question and answer text wraps instead of clipping.")
+        XCTAssertLessThanOrEqual(largeSize.width, 270.5)
     }
 
 }

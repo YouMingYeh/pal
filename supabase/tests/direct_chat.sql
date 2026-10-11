@@ -65,7 +65,7 @@ select public.send_message(current_setting('pal.direct.id')::uuid,'Summarize my 
 do $$
 begin
   assert (select run_after=now() and explicit_mention from public.agent_jobs where group_id=current_setting('pal.direct.id')::uuid),'Direct message is immediately eligible without @Pal';
-  assert public.pal_group_state(current_setting('pal.direct.id')::uuid)->'pal_activity'->>'status'='accepted','Direct accepted activity comes from an actual queued job';
+  assert public.pal_group_state(current_setting('pal.direct.id')::uuid)->'pal_activity'->>'activity'='idle','Private queued work is not a chosen reply';
   assert not has_function_privilege('authenticated','public.pal_read_across_groups(uuid,integer,integer,text)','execute'),'Client cannot forge cross-group job scope';
   begin
     delete from public.group_members where group_id=current_setting('pal.direct.id')::uuid;

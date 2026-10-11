@@ -29,11 +29,14 @@ final class PalAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationC
         completionHandler()
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound, .badge])
+        completionHandler(PalNotifications.presentationOptions(for: UIApplication.shared.applicationState))
     }
 }
 
 enum PalNotifications {
+    @MainActor static func presentationOptions(for state: UIApplication.State) -> UNNotificationPresentationOptions {
+        state == .active ? [] : [.banner, .sound, .badge]
+    }
     @MainActor static func registerIfAuthorized() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         UserDefaults.standard.set(settings.authorizationStatus.rawValue, forKey: "PalNotificationAuthorization")

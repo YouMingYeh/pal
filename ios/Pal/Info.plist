@@ -36,6 +36,8 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Take a photo for a chat or scan a group invite.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Share your approximate location with groups you choose while Pal is open. Sharing expires after an hour without updates.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Record a voice message to send to your group.</string>
 	<key>PalAPIURL</key>

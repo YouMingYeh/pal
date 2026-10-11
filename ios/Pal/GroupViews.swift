@@ -1,69 +1,6 @@
 import SwiftUI
 import MapKit
 
-struct GroupMapView: View {
-    let group: ChatGroup
-    @EnvironmentObject private var store: PalStore
-    @State private var mode = 0
-    @State private var searching = false
-    private var places: [GroupPlace] { (store.states[group.id] ?? .empty).places }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if store.states[group.id] != nil, store.stateFetch[group.id]?.issue != nil {
-                PalFetchStatusView(state: store.stateFetch[group.id] ?? PalFetchState(), hasContent: true) { Task { await refresh() } }
-            }
-            if !places.isEmpty {
-                Picker("View", selection: $mode) {
-                    Text("Map").tag(0)
-                    Text("Saved").tag(1)
-                }.pickerStyle(.segmented).padding()
-            }
-            if store.states[group.id] == nil {
-                PalFetchStatusView(state: store.stateFetch[group.id] ?? PalFetchState(), hasContent: false) { Task { await refresh() } }
-                    .frame(maxHeight: .infinity)
-            } else if places.isEmpty {
-                VStack(spacing: 16) {
-                    Image("DoodlePlaces").renderingMode(.template).resizable().scaledToFit()
-                        .frame(width: 100, height: 100).foregroundStyle(.secondary).accessibilityHidden(true)
-                    Text("Your shared places").font(.title3.weight(.semibold))
-                    Text("Save a place from chat, or find one here.").foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("Find a place") { searching = true }.buttonStyle(.borderedProminent).tint(PalTheme.accent).foregroundStyle(PalTheme.onAccent)
-                }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if mode == 0 {
-                Map {
-                    ForEach(places.filter { $0.latitude != nil && $0.longitude != nil && $0.status == "resolved" }) { place in
-                        Annotation(place.name, coordinate: CLLocationCoordinate2D(latitude: place.latitude!, longitude: place.longitude!)) {
-                            NavigationLink { PlaceDetailView(group: group, place: place) } label: {
-                                Image(systemName: "mappin.circle.fill").font(.title).foregroundStyle(PalTheme.ink)
-                                    .background(.background, in: Circle())
-                            }.accessibilityLabel(place.name)
-                        }
-                    }
-                }.mapControls { MapCompass(); MapScaleView() }
-            } else {
-                List {
-                    ForEach(places) { place in
-                        NavigationLink { PlaceDetailView(group: group, place: place) } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(place.name).font(.headline)
-                                if let address = place.address { Text(address).font(.subheadline).foregroundStyle(.secondary) }
-                                if place.status != "resolved" { Label("Check this place", systemImage: "questionmark.circle").font(.caption).foregroundStyle(.secondary) }
-                            }
-                        }
-                    }
-                }.listStyle(.plain)
-            }
-        }
-        .navigationTitle("Map").navigationBarTitleDisplayMode(.inline)
-        .toolbar { Button("Add place", systemImage: "plus") { searching = true } }
-        .sheet(isPresented: $searching) { NavigationStack { PlaceSearchView(group: group) } }
-        .task { await refresh() }
-        .refreshable { await refresh() }
-    }
-    private func refresh() async { do { try await store.loadState(group) } catch { /* Keep map data and offer retry. */ } }
-}
-
 struct PlaceSearchView: View {
     private struct SearchPlace: Decodable, Identifiable {
         let providerID: String
@@ -179,7 +116,6 @@ struct PlaceDetailView: View {
                 ContributorLine(group: group, contributors: current.contributors)
                 if let address = current.address { Text(address).foregroundStyle(.secondary) }
                 if let latitude = current.latitude, let longitude = current.longitude {
-                    Map { Marker(current.name, coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)) }.frame(height: 190)
                     Button("Directions in Maps", systemImage: "arrow.triangle.turn.up.right.diamond") {
                         let item = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)))
                         item.name = current.name
@@ -195,7 +131,7 @@ struct PlaceDetailView: View {
             }
             if current.status != "resolved" {
                 Section("Confirm the right place") {
-                    Text("Pal needs you to check this location before adding a pin.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Pal needs you to check this location before saving it.").font(.footnote).foregroundStyle(.secondary)
                     ForEach(Array(current.candidates.enumerated()), id: \.offset) { _, candidate in
                         Button { confirm(candidate) } label: {
                             VStack(alignment: .leading) {
@@ -416,32 +352,37 @@ struct PlanDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack {
-                        Text(current.status == "draft" ? "PROPOSED" : current.status.uppercased()).font(.caption.weight(.semibold)).tracking(1).foregroundStyle(.secondary)
-                        Spacer()
-                        Image("DoodleCalendar").renderingMode(.template).resizable().scaledToFit().frame(width: 38, height: 38).foregroundStyle(PalTheme.accentText).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 20) {
+                    HStack(alignment: .top, spacing: 14) {
+                        PlanDateBadge(date: current.startsAt.flatMap(PalDate.date))
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(current.status == "draft" ? "Proposed plan" : current.status.capitalized).font(.subheadline).foregroundStyle(.secondary)
+                            Text(current.title).font(.largeTitle.weight(.bold)).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                    Text(current.title).font(.largeTitle.weight(.bold)).fixedSize(horizontal: false, vertical: true)
                     if let date = current.startsAt.flatMap(PalDate.date) {
-                        Text(date.formatted(date: .complete, time: .omitted)).font(.headline)
-                        HStack(spacing: 6) {
-                            Text(date.formatted(date: .omitted, time: .shortened))
-                            if let end = current.endsAt.flatMap(PalDate.date) { Text("– " + end.formatted(date: .omitted, time: .shortened)) }
-                            Text(TimeZone.current.abbreviation(for: date) ?? "").foregroundStyle(.secondary)
-                        }.font(.title3)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(date.formatted(date: .complete, time: .omitted)).font(.headline)
+                            Text(date.formatted(date: .omitted, time: .shortened) + (current.endsAt.flatMap(PalDate.date).map { " – " + $0.formatted(date: .omitted, time: .shortened) } ?? ""))
+                                .font(.title3).fixedSize(horizontal: false, vertical: true)
+                            Text(TimeZone.current.abbreviation(for: date) ?? "").font(.caption).foregroundStyle(.secondary)
+                        }
                     } else { Text("Time to be decided").foregroundStyle(.secondary) }
                     if let place {
-                        NavigationLink { PlaceDetailView(group: group, place: place) } label: {
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "mappin.and.ellipse").frame(width: 22)
-                                VStack(alignment: .leading, spacing: 4) { Text(place.name).font(.headline); if let address = place.address { Text(address).font(.subheadline).foregroundStyle(.secondary) } }
-                                Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                            }.foregroundStyle(.primary).frame(minHeight: 44)
-                        }.buttonStyle(.plain)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(place.name).font(.headline)
+                            if let address = place.address { Text(address).font(.subheadline).foregroundStyle(.secondary) }
+                            if let latitude = place.latitude, let longitude = place.longitude {
+                                Button("Directions", systemImage: "arrow.triangle.turn.up.right.diamond") {
+                                    let item = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)))
+                                    item.name = place.name
+                                    item.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking])
+                                }.font(.subheadline).tint(PalTheme.ink).frame(minHeight: 44)
+                            }
+                        }
                     }
                     if let notes = current.notes, !notes.isEmpty { Text(notes).font(.body).foregroundStyle(.secondary) }
-                }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))
+                }
                 if let issue = store.stateFetch[group.id]?.issue {
                     HStack { Text("Showing saved details.").font(.caption).foregroundStyle(.secondary); Spacer(); Button("Retry") { Task { try? await store.loadState(group) } }.accessibilityHint(issue) }
                 }
@@ -474,23 +415,26 @@ struct PlanDetailView: View {
                         }.buttonStyle(.plain)
                     }
                 }
-                if current.canRSVP(), let place {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Reservation").font(.title3.weight(.semibold))
-                        Text(current.bookingStatus?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Not booked").font(.subheadline).foregroundStyle(.secondary)
-                        if let reference = current.bookingReference, !reference.isEmpty { Text(reference).font(.body).textSelection(.enabled) }
-                        if let link = place.bookingURL ?? place.website, let url = URL(string: link), ["https", "http"].contains(url.scheme) {
-                            Link(destination: url) { Label(place.bookingURL == nil ? "Visit website" : "Open booking page", systemImage: "arrow.up.right").frame(minHeight: 44) }.tint(PalTheme.accentText)
-                        }
-                        DisclosureGroup("Record a reservation", isExpanded: $recordingBooking) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Complete the booking on the website, then save the details here.").font(.footnote).foregroundStyle(.secondary)
-                                TextField("Confirmation reference (optional)", text: $bookingReference).textFieldStyle(.roundedBorder)
-                                Button("Mark as booked") { action("plan.booking", ["status": .string("booked"), "reference": .string(bookingReference)]) }.disabled(busy)
+                if let place, (current.status == "confirmed" && place.bookingURL != nil) || current.bookingStatus == "booked" {
+                    DisclosureGroup("Reservation", isExpanded: $recordingBooking) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(current.bookingStatus == "booked" ? "Reservation confirmed" : current.bookingStatus == "requested" ? "Reservation pending" : current.bookingStatus == "failed" ? "Reservation not completed" : "Not booked").font(.subheadline).foregroundStyle(.secondary)
+                            if let reference = current.bookingReference, !reference.isEmpty { Text(reference).font(.body).textSelection(.enabled) }
+                            if current.canRSVP() {
+                            if let link = place.bookingURL, let url = URL(string: link), ["https", "http"].contains(url.scheme) {
+                                Link("Open booking page", destination: url).frame(minHeight: 44).tint(PalTheme.ink)
+                            }
+                            TextField("Confirmation reference (optional)", text: $bookingReference).textFieldStyle(.roundedBorder)
+                            if current.bookingStatus == "booked" {
+                                Button("Update confirmation") { action("plan.booking", ["status": .string("booked"), "reference": .string(bookingReference)]) }.disabled(busy)
                                 Button("Reservation still needed") { action("plan.booking", ["status": .string("needed")]) }.disabled(busy)
-                            }.padding(.top, 8)
-                        }.tint(PalTheme.ink)
-                    }
+                            } else {
+                                Text("Book on the website, then record the confirmation here.").font(.footnote).foregroundStyle(.secondary)
+                                Button("Mark as booked") { action("plan.booking", ["status": .string("booked"), "reference": .string(bookingReference)]) }.disabled(busy)
+                            }
+                            }
+                        }.padding(.top, 12)
+                    }.font(.headline).tint(PalTheme.ink)
                 }
                 if savedCalendarVersion != nil || (current.canRSVP() && current.response(for: store.userID) == "going") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -499,7 +443,7 @@ struct PlanDetailView: View {
                             if current.status == "cancelled" || current.response(for: store.userID) != "going" { Text("Remove the Calendar copy if you no longer need it.").font(.footnote).foregroundStyle(.secondary) }
                             else if savedCalendarVersion != (current.version ?? 1) { Text("This plan changed. Update its existing Calendar copy.").font(.footnote).foregroundStyle(.secondary) }
                         } else { Button("Add to Apple Calendar", systemImage: "calendar.badge.plus", action: reviewCalendarCopy).frame(minHeight: 44).disabled(busy) }
-                        Text("You review and save a copy. Later changes stay in Pal.").font(.footnote).foregroundStyle(.secondary)
+                        Text("Later changes stay in Pal.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 if busy { ProgressView().frame(maxWidth: .infinity) }

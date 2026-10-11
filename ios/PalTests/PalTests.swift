@@ -49,12 +49,17 @@ final class PalTests: XCTestCase {
         XCTAssertFalse(hint.isVisible(at: now.addingTimeInterval(120)), "A failed state fetch cannot leave an optimistic indicator indefinitely.")
     }
 
-    func testPalThinkingRequiresAnUnexpiredRealChatJob() throws {
+    func testPalTypingRequiresAnExplicitReplyPhaseInEveryChat() throws {
         let now = PalDate.date("2026-10-11T20:00:00Z")!
         var activity = PalWorkActivity(activity: "thinking", jobID: UUID(), status: "accepted", expiresAt: "2026-10-11T20:01:00Z")
-        XCTAssertTrue(activity.isThinking(at: now))
+        XCTAssertFalse(activity.isThinking(at: now), "Queued shared messages do not mean Pal has chosen to reply.")
         activity.status = "running"
-        XCTAssertTrue(activity.isThinking(at: now))
+        XCTAssertFalse(activity.isThinking(at: now), "Reading and deciding must not claim group typing.")
+        activity.activity = "typing"
+        XCTAssertTrue(activity.isThinking(at: now), "An explicit live reply phase displays typing.")
+        activity.status = "accepted"
+        XCTAssertFalse(activity.isThinking(at: now), "A typing label without a running lease is invalid.")
+        activity.status = "running"
         XCTAssertFalse(activity.isThinking(at: PalDate.date("2026-10-11T20:01:00Z")!))
         activity.status = "completed"
         XCTAssertFalse(activity.isThinking(at: now))
@@ -382,6 +387,14 @@ final class PalTests: XCTestCase {
     }
 
     @MainActor
+    func testForegroundChatNotificationsStayQuietWithoutChangingBackgroundPresentation() {
+        XCTAssertTrue(PalNotifications.presentationOptions(for: .active).isEmpty)
+        for state in [UIApplication.State.inactive, .background] {
+            XCTAssertEqual(PalNotifications.presentationOptions(for: state), [.banner, .sound, .badge])
+        }
+    }
+
+    @MainActor
     func testPushFailureReportsItsActualReasonAndDoesNotChangeSession() {
         let store = PalStore()
         let owner = store.userID
@@ -446,7 +459,7 @@ final class PalTests: XCTestCase {
         XCTAssertTrue(aliceMessages.contains { $0.role == "pal" && $0.body.hasPrefix("Reminder:") })
         try await attachScreenshot(of: NavigationStack { ChatView(group: aliceGroup) }.environmentObject(alice).environment(\.scenePhase, .active), name: "Live Pal conversation")
         try await attachScreenshot(of: NavigationStack { GroupCalendarView(group: aliceGroup) }.environmentObject(alice), name: "Live group calendar")
-        try await attachScreenshot(of: NavigationStack { GroupMapView(group: aliceGroup) }.environmentObject(alice), name: "Live saved places")
+        try await attachScreenshot(of: NavigationStack { GroupCalendarView(group: aliceGroup) }.environmentObject(alice), name: "Live group calendar")
         try await attachScreenshot(of: LoginView().environmentObject(alice), name: "Native Apple sign in")
     }
 
@@ -568,7 +581,7 @@ final class PalTests: XCTestCase {
         try await attachScreenshot(of: NavigationStack { ChatView(group: group) }.environmentObject(store).environment(\.scenePhase, .active), name: "Live v1 Pal chat")
         try await attachScreenshot(of: NavigationStack { ChatView(group: group) }.environmentObject(store).environment(\.scenePhase, .active).preferredColorScheme(.dark), name: "Live v1 Pal chat dark")
         try await attachScreenshot(of: NavigationStack { GroupCalendarView(group: group) }.environmentObject(store), name: "Live v1 calendar")
-        try await attachScreenshot(of: NavigationStack { GroupMapView(group: group) }.environmentObject(store), name: "Live v1 saved map")
+        try await attachScreenshot(of: NavigationStack { GroupCalendarView(group: group) }.environmentObject(store), name: "Live v1 group calendar")
         try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store), name: "Live v1 profile and Google Calendar", wait: 6)
         try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store).preferredColorScheme(.dark), name: "Live v1 profile dark", wait: 6)
         if let plan = state.plans.first(where: { $0.status != "cancelled" }) { try await attachScreenshot(of: NavigationStack { PlanDetailView(group: group, plan: plan) }.environmentObject(store), name: "Live v1 plan details") }

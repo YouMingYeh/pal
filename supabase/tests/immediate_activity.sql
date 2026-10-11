@@ -1,4 +1,4 @@
--- Dedicated test database only. Actual queue activity fixtures roll back.
+-- Dedicated test database only. Shared queue work stays quiet until reply intent; fixtures roll back.
 begin;
 insert into auth.users(id,email) values
  ('70000000-0000-4000-8000-000000000001','pal-immediate-member@example.invalid'),
@@ -11,9 +11,9 @@ do $$
 declare a jsonb;
 begin
   a:=public.pal_group_state(current_setting('pal.immediate.group')::uuid)->'pal_activity';
-  assert a->>'activity'='thinking' and a->>'status'='accepted','Every actual human message starts queued activity immediately';
-  assert (a->>'expires_at')::timestamptz=now()+interval '5 minutes','Accepted state has a fixed deadline from message acceptance';
-  assert (select run_after=now()+interval '10 seconds' and not explicit_mention from public.agent_jobs where id=(a->>'job_id')::uuid),'Immediate animation preserves passive ten-second debounce';
+  assert a->>'activity'='idle','A shared human message does not immediately claim typing';
+  assert a->>'expires_at' is null,'Queued shared work has no typing deadline';
+  assert (select run_after=now()+interval '3 seconds' and not explicit_mention from public.agent_jobs where group_id=current_setting('pal.immediate.group')::uuid),'Quiet observation preserves the short group-burst debounce';
 end $$;
 set local role service_role;
 do $$
@@ -22,17 +22,17 @@ begin
   select * into j from public.agent_jobs where group_id=current_setting('pal.immediate.group')::uuid;
   update public.agent_jobs set run_after=now()+interval '1 day' where id=j.id;
   a:=public.pal_group_state(j.group_id)->'pal_activity';
-  assert (a->>'expires_at')::timestamptz=now()+interval '5 minutes','Distant schedules cannot extend accepted animation indefinitely';
+  assert a->>'activity'='idle','Distant shared queues do not animate';
   update public.agent_jobs set created_at=now()-interval '6 minutes' where id=j.id;
   assert public.pal_group_state(j.group_id)->'pal_activity'->>'activity'='idle','Old future queues expire despite distant run_after';
   update public.agent_jobs set created_at=now(),run_after=now() where id=j.id;
   a:=public.pal_group_state(j.group_id)->'pal_activity';
-  assert a->>'status'='accepted' and (a->>'expires_at')::timestamptz=now()+interval '5 minutes','Due accepted state keeps its existing behavior';
+  assert a->>'activity'='idle','Due shared queues wait for the reply decision';
   update public.groups set agent_paused=true where id=j.group_id;
   assert public.pal_group_state(j.group_id)->'pal_activity'->>'activity'='idle','Paused accepted work stays idle';
   update public.groups set agent_paused=false where id=j.group_id;
   select * into j from public.claim_agent_jobs(1);
-  assert public.pal_group_state(j.group_id)->'pal_activity'->>'status'='running','Real claim transitions accepted activity to running';
+  assert public.pal_group_state(j.group_id)->'pal_activity'->>'activity'='idle','A real worker may read the group without typing';
   n:=(select count(*) from public.messages where group_id=j.group_id);
   assert public.complete_agent_job(j.id,j.attempts,''),'Selective agent may complete silently';
   assert (select count(*)=n from public.messages where group_id=j.group_id),'Immediate animation does not force a Pal reply';

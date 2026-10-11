@@ -19,18 +19,21 @@ struct AvatarView: View {
 struct PalCardView: View {
     let group: ChatGroup
     let card: MessageCard
+    var sourceMessageID: UUID? = nil
     @EnvironmentObject private var store: PalStore
     private var state: GroupState { store.states[group.id] ?? .empty }
     var body: some View {
         Group {
             switch card.type {
+            case "question": QuestionCardView(group: group, card: card, sourceMessageID: sourceMessageID)
             case "place":
                 if let place = state.places.first(where: { $0.id == card.entityID }) {
                     NavigationLink { PlaceDetailView(group: group, place: place) } label: { VStack(alignment: .leading, spacing: 6) { cardLabel("mappin.and.ellipse", title: place.name, subtitle: place.status == "resolved" ? (place.address ?? "Saved place") : "Choose the correct place"); ContributorLine(group: group, contributors: place.contributors) } }
                 } else if let source = state.sources.first(where: { $0.id == card.entityID || $0.id == card.sourceID }) {
                     SourceCardView(group: group, source: source)
                 } else { cardLabel("mappin", title: "Place", subtitle: "Loading details…") }
-            case "options", "choice", "availability": PollCardView(group: group, pollID: card.entityID)
+            case "options", "choice": OptionsCardView(group: group, pollID: card.entityID)
+            case "availability": PollCardView(group: group, pollID: card.entityID)
             case "plan", "rsvp": RSVPCardView(group: group, planID: card.entityID)
             case "reminder":
                 if let reminder = state.reminders.first(where: { $0.id == card.entityID }) {
@@ -40,14 +43,51 @@ struct PalCardView: View {
                 } else { cardLabel("bell", title: "Reminder", subtitle: "Loading details…") }
             default: EmptyView()
             }
-        }.buttonStyle(.plain).padding(14).frame(maxWidth: 300, alignment: .leading)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color(uiColor: .separator).opacity(0.35), lineWidth: 0.5))
+        }.buttonStyle(.plain).padding(["options", "choice"].contains(card.type) ? 0 : 14).frame(maxWidth: 300, alignment: .leading)
+            .background {
+                if !["options", "choice"].contains(card.type) {
+                    RoundedRectangle(cornerRadius: 18).fill(Color(uiColor: .secondarySystemBackground))
+                        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color(uiColor: .separator).opacity(0.35), lineWidth: 0.5))
+                }
+            }
     }
     private func cardLabel(_ icon: String, title: String, subtitle: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon).foregroundStyle(PalTheme.ink).frame(width: 24)
             VStack(alignment: .leading, spacing: 5) { Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary); Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+        }
+    }
+}
+
+struct QuestionCardView: View {
+    let group: ChatGroup
+    let card: MessageCard
+    let sourceMessageID: UUID?
+    @EnvironmentObject private var store: PalStore
+    @State private var sending = false
+    @ScaledMetric(relativeTo: .body) private var minimumChipWidth: CGFloat = 110
+    var body: some View {
+        if let question = card.questionText(for: group.id) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(question).font(.body).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: min(minimumChipWidth, 260)), spacing: 8)], spacing: 8) {
+                    ForEach(card.suggestedAnswers, id: \.self) { answer in
+                        Button {
+                            guard !sending, let sourceMessageID else { return }
+                            sending = true
+                            Task {
+                                await store.queue(answer, group: group, replyTo: sourceMessageID)
+                                sending = false
+                            }
+                        } label: {
+                            Text(answer).font(.subheadline.weight(.medium)).fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 12).padding(.vertical, 8).frame(maxWidth: .infinity, minHeight: 44)
+                                .foregroundStyle(.primary).background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 14))
+                        }.buttonStyle(.plain).disabled(sending || sourceMessageID == nil || store.userID == nil)
+                            .accessibilityHint("Send this answer as a reply to Pal")
+                    }
+                }
+            }
         }
     }
 }
@@ -69,6 +109,61 @@ struct CardRecordStatusView: View {
     }
 }
 
+struct OptionsCardView: View {
+    let group: ChatGroup
+    let pollID: UUID
+    @EnvironmentObject private var store: PalStore
+    private var state: GroupState { store.states[group.id] ?? .empty }
+    private var poll: GroupPoll? { state.polls.first { $0.id == pollID && $0.kind == "place" } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let poll {
+                Text(poll.question).font(.headline).foregroundStyle(.primary)
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(poll.options) { option in
+                            let place = state.places.first { $0.id == option.placeID }
+                            let thumbnail = state.sources.first { source in
+                                guard let placeID = option.placeID else { return false }
+                                return source.placeID == placeID || source.placeIDs?.contains(placeID) == true
+                            }?.thumbnailURL
+                            let idea = HangoutIdea.saved(in: state).first {
+                                (option.placeID != nil && $0.place?.id == option.placeID) || $0.id == "option:\(poll.id):\(option.id)"
+                            } ?? HangoutIdea(id: "option:\(poll.id):\(option.id)", title: option.label, subtitle: nil, place: place, sources: [])
+                            NavigationLink { HangoutIdeaDetailView(group: group, idea: idea) } label: {
+                                InspirationTile(option: option, place: place, thumbnail: thumbnail)
+                            }.accessibilityHint("View idea details")
+                        }
+                    }
+                }.scrollIndicators(.hidden)
+            } else { CardRecordStatusView(group: group, title: "Ideas") }
+        }.task { if poll == nil { try? await store.loadState(group) } }
+    }
+}
+
+struct InspirationTile: View {
+    let option: PollOption
+    let place: GroupPlace?
+    let thumbnail: URL?
+    @ScaledMetric(relativeTo: .body) private var tileWidth: CGFloat = 228
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let thumbnail {
+                PalCachedAvatarImage(url: thumbnail).background(Color(uiColor: .tertiarySystemFill))
+                    .frame(width: min(tileWidth, 260), height: 125).clipped().accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(place?.name ?? option.label).font(.headline).foregroundStyle(.primary)
+                if let place, option.label != place.name { Text(option.label).font(.subheadline).foregroundStyle(.secondary) }
+                if let address = place?.address { Text(address).font(.caption).foregroundStyle(.secondary) }
+            }.padding(12)
+        }.frame(width: min(tileWidth, 260), alignment: .leading)
+            .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 16))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .accessibilityElement(children: .combine)
+    }
+}
+
 struct PollCardView: View {
     let group: ChatGroup
     let pollID: UUID
@@ -79,10 +174,10 @@ struct PollCardView: View {
     private var poll: GroupPoll? { state.polls.first { $0.id == pollID } }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let poll {
-                Label(poll.kind == "time" ? "Availability" : "Ideas for the group", systemImage: poll.kind == "time" ? "calendar" : "sparkles").font(.caption).foregroundStyle(.secondary)
+            if let poll, poll.kind == "time" {
+                Label("Availability", systemImage: "calendar").font(.caption).foregroundStyle(.secondary)
                 Text(poll.question).font(.headline)
-                if poll.canVote() { Text(poll.kind == "time" ? "Choose times" : "Pick a favorite").font(.subheadline.weight(.semibold)).foregroundStyle(.primary) }
+                if poll.canVote() { Text("Choose times").font(.subheadline.weight(.semibold)).foregroundStyle(.primary) }
                 ForEach(poll.options) { option in
                     let votes = poll.votes.filter { $0.optionID == option.id }.count
                     let selected = poll.votes.contains { $0.userID == store.userID && $0.optionID == option.id }
@@ -106,11 +201,6 @@ struct PollCardView: View {
                             .accessibilityLabel(Text("\(option.label), \(votes) selected"))
                             .accessibilityValue(selected ? "Selected" : "Not selected")
                             .disabled(busy || !poll.canVote())
-                        if let place = state.places.first(where: { $0.id == option.placeID }) {
-                            NavigationLink { PlaceDetailView(group: group, place: place) } label: {
-                                Label("Place details", systemImage: "arrow.up.right").font(.caption)
-                            }.frame(minHeight: 44).padding(.leading, 10)
-                        }
                     }
                 }
                 if poll.kind == "time" {
@@ -144,12 +234,12 @@ struct PollCardView: View {
                 }
                 Text(poll.canVote() ? "You can change your answer." : "Responses closed").font(.caption).foregroundStyle(.secondary)
                 if let issue { Text(issue).font(.caption).foregroundStyle(PalTheme.error) }
-            } else { CardRecordStatusView(group: group, title: "Options") }
+            } else { CardRecordStatusView(group: group, title: "Availability") }
         }.task { if poll == nil { try? await store.loadState(group) } }
     }
     private func vote(_ option: PollOption, poll: GroupPoll, selected: Bool) {
-        var selections = poll.kind == "time" ? poll.votes.filter { $0.userID == store.userID }.map(\.optionID) : []
-        if selected && poll.kind == "time" { selections.removeAll { $0 == option.id } } else { selections.append(option.id) }
+        var selections = poll.votes.filter { $0.userID == store.userID }.map(\.optionID)
+        if selected { selections.removeAll { $0 == option.id } } else { selections.append(option.id) }
         submit(selections, poll: poll)
     }
     private func submit(_ selections: [String], poll: GroupPoll) {
@@ -174,13 +264,8 @@ struct SourceCardView: View {
             Label(source.title ?? "Shared place", systemImage: "link").font(.headline)
             ContributorLine(group: group, contributors: source.contributors)
             if let thumbnail = source.thumbnailURL {
-                AsyncImage(url: thumbnail) { phase in
-                    switch phase {
-                    case .success(let image): image.resizable().scaledToFit()
-                    case .failure: Text("Preview unavailable").font(.caption).foregroundStyle(.secondary)
-                    default: ProgressView()
-                    }
-                }.frame(maxWidth: .infinity, maxHeight: 140).clipped().clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
+                PalCachedAvatarImage(url: thumbnail).frame(maxWidth: .infinity).frame(height: 140)
+                    .background(Color(uiColor: .tertiarySystemFill)).clipped().clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
             }
             if let url = source.url.flatMap({ URL(string: $0) }), ["http", "https"].contains(url.scheme ?? "") {
                 Link("Open " + (url.host ?? "source"), destination: url).tint(PalTheme.accentText).font(.subheadline).frame(minHeight: 44, alignment: .leading)
@@ -263,6 +348,20 @@ struct RSVPButtons: View {
     }
 }
 
+struct PlanDateBadge: View {
+    var date: Date?
+    var body: some View {
+        VStack(spacing: 2) {
+            if let date {
+                Text(date, format: .dateTime.month(.abbreviated)).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(date, format: .dateTime.day()).font(.title2.weight(.bold)).foregroundStyle(.primary)
+            } else { Image(systemName: "calendar").font(.title2).foregroundStyle(.secondary) }
+        }.padding(10).frame(minWidth: 54)
+            .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12))
+            .accessibilityElement(children: .ignore).accessibilityLabel(date?.formatted(date: .complete, time: .omitted) ?? "Time to be decided")
+    }
+}
+
 struct RSVPCardView: View {
     let group: ChatGroup
     let planID: UUID
@@ -272,18 +371,15 @@ struct RSVPCardView: View {
     private var state: GroupState { store.states[group.id] ?? .empty }
     private var plan: GroupPlan? { state.plans.first { $0.id == planID } }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             if let plan {
                 NavigationLink { PlanDetailView(group: group, plan: plan) } label: {
                     HStack(alignment: .top, spacing: 12) {
-                        Image("DoodleCalendar").renderingMode(.template).resizable().scaledToFit().frame(width: 32, height: 32).foregroundStyle(PalTheme.accentText).accessibilityHidden(true)
+                        PlanDateBadge(date: plan.startsAt.flatMap(PalDate.date))
                         VStack(alignment: .leading, spacing: 5) {
                             Text(plan.title).font(.headline).foregroundStyle(.primary)
                             Text(plan.startsAt.flatMap(PalDate.date)?.formatted(date: .abbreviated, time: .shortened) ?? "Time to be decided").font(.subheadline).foregroundStyle(.secondary)
-                            if let place = state.places.first(where: { $0.id == plan.placeID }) {
-                                Text(place.name).font(.subheadline).foregroundStyle(.secondary)
-                                if let address = place.address { Text(address).font(.caption).foregroundStyle(.secondary) }
-                            }
+                            if let place = state.places.first(where: { $0.id == plan.placeID }), place.name != plan.title { Text(place.name).font(.subheadline).foregroundStyle(.secondary) }
                             if plan.status != "confirmed" { Text(plan.status.capitalized).font(.caption.weight(.medium)).foregroundStyle(.secondary) }
                         }
                         Spacer(minLength: 0)
@@ -291,45 +387,27 @@ struct RSVPCardView: View {
                     }
                 }.buttonStyle(.plain).accessibilityHint("Plan details")
                 if plan.status == "draft" {
-                    NavigationLink { PlanDetailView(group: group, plan: plan) } label: {
-                        Label(plan.startsAt.flatMap(PalDate.date).map { $0 > Date() } == true ? "Review and confirm plan" : "Review plan", systemImage: "arrow.right")
-                            .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    }.foregroundStyle(.primary)
-                }
-                if plan.canRSVP() {
-                    Text(RSVPButtons.prompt(for: plan.response(for: store.userID))).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                    RSVPButtons(selected: plan.response(for: store.userID), busy: busy) { status in
-                        guard !busy else { return }; busy = true; issue = nil
-                        Task {
-                            defer { busy = false }
-                            do { try await store.mutate(group, action: "plan.rsvp", data: ["id": .string(plan.id.uuidString), "status": .string(status)]) }
-                            catch { if !PalCancellation.isCancellation(error) { issue = "Couldn’t save your response. Try again." } }
-                        }
+                    if plan.startsAt.flatMap(PalDate.date).map({ $0 > Date() }) == true {
+                        Button { change(plan, action: "plan.confirm") } label: {
+                            Text("Confirm plan").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+                                .foregroundStyle(PalTheme.onAccent).background(PalTheme.accent, in: RoundedRectangle(cornerRadius: 12))
+                        }.disabled(busy)
+                    } else {
+                        NavigationLink("Set a time") { PlanDetailView(group: group, plan: plan) }.font(.subheadline.weight(.semibold)).frame(minHeight: 44)
                     }
-                } else if plan.status != "draft" { Text(plan.status == "cancelled" ? "This plan was cancelled." : "RSVP closed").font(.subheadline).foregroundStyle(.secondary) }
-                if plan.status != "draft" {
-                    Text(plan.attendanceSummary(memberCount: state.members.count)).font(.caption).foregroundStyle(.secondary)
-                    DisclosureGroup("Who’s coming") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(state.members) { member in
-                                NavigationLink { MemberDetailView(groupID: group.id, member: member) } label: {
-                                HStack(spacing: 8) {
-                                    AvatarView(name: member.displayName ?? "Member", url: member.avatarURL, size: 36)
-                                    Text(member.displayName ?? "Member").font(.caption.weight(.medium))
-                                    Spacer(minLength: 8)
-                                    let response = plan.response(for: member.userID)
-                                    Text(response == "going" ? "Going" : response == "maybe" ? "Maybe" : response == "declined" ? "Not going" : "No reply").font(.caption).foregroundStyle(.secondary)
-                                }.frame(minHeight: 44).foregroundStyle(.primary)
-                                }.buttonStyle(.plain).accessibilityHint("Member details")
-                            }
-                        }.padding(.top, 6)
-                    }.font(.subheadline)
-                }
-                if let bookingStatus = plan.bookingStatus {
-                    Label(bookingStatus == "booked" ? "Reservation confirmed" : bookingStatus == "requested" ? "Reservation pending" : bookingStatus == "failed" ? "Reservation not completed" : "Not booked", systemImage: "fork.knife").font(.caption).foregroundStyle(.secondary)
-                }
+                } else if plan.canRSVP() {
+                    RSVPButtons(selected: plan.response(for: store.userID), busy: busy) { status in change(plan, action: "plan.rsvp", extra: ["status": .string(status)]) }
+                } else { Text(plan.status == "cancelled" ? "This plan was cancelled." : "RSVP closed").font(.subheadline).foregroundStyle(.secondary) }
                 if let issue { Text(issue).font(.caption).foregroundStyle(PalTheme.error) }
             } else { CardRecordStatusView(group: group, title: "Plan") }
         }.task { if plan == nil { try? await store.loadState(group) } }
+    }
+    private func change(_ plan: GroupPlan, action: String, extra: [String: JSONValue] = [:]) {
+        guard !busy else { return }; busy = true; issue = nil
+        Task {
+            defer { busy = false }
+            do { try await store.mutate(group, action: action, data: extra.merging(["id": .string(plan.id.uuidString)]) { _, new in new }) }
+            catch { if !PalCancellation.isCancellation(error) { issue = "Couldn’t save. Try again." } }
+        }
     }
 }

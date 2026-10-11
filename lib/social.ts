@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { admin, checked, env } from "./db";
 import { assertPublicURL, readWeb } from "./research";
 import { resolvePlace } from "./maps";
+import { sourceReply } from "./source-response";
 
 export const extractedPlaces = z.object({ places: z.array(z.object({
   name: z.string().min(1).max(160), city: z.string().max(160), address: z.string().max(500),
@@ -77,29 +78,12 @@ export async function runSocialInspection() {
   const db = admin();
   const sources = checked(await db.rpc("pal_claim_sources", { p_limit: 3 })) as Source[];
   await Promise.all(sources.map(async source => {
+    let result: Inspection;
     try {
       // Persist completed extraction before geocoding so retries never restart a paid video job.
-      const result: Inspection = source.extraction?.places ? {
+      result = source.extraction?.places ? {
         status: "completed", metadata: source.extraction.metadata ?? {}, candidates: source.extraction.places,
       } : await inspectSharedUrl(source.url, source.provider_job_id);
-      const metadata = { ...(source.extraction?.metadata ?? {}), ...result.metadata };
-      if (result.status === "failed") throw new Error(result.error);
-      if (result.status === "pending") {
-        checked(await db.rpc("pal_complete_source", { p_id: source.id, p_result: {
-          status: "resolving", provider_job_id: result.jobId, extraction: { metadata }, metadata, expected_attempt: source.attempts,
-        } }));
-        return;
-      }
-      checked(await db.from("sources").update({ extraction: { metadata, places: result.candidates } }).eq("id", source.id).eq("attempts", source.attempts));
-      const candidates = await Promise.all(result.candidates.map(async candidate => {
-        const query = [candidate.name, candidate.city || candidate.address].filter(Boolean).join(" ").slice(0, 200);
-        const options = await resolvePlace(query).catch(() => []);
-        return { ...candidate, options };
-      }));
-      checked(await db.rpc("pal_complete_source", { p_id: source.id, p_result: {
-        status: "needs_confirmation", title: typeof metadata.title === "string" ? metadata.title : undefined, expected_attempt: source.attempts,
-        extraction: { metadata, places: result.candidates }, metadata, candidates,
-      } }));
     } catch (error) {
       if (error instanceof InspectionError && error.retryable) {
         checked(await db.rpc("pal_complete_source", { p_id: source.id, p_result: {
@@ -107,8 +91,35 @@ export async function runSocialInspection() {
         } }));
         return;
       }
-      checked(await db.rpc("pal_fail_source", { p_id: source.id, p_error: error instanceof Error ? error.message.slice(0, 300) : "Inspection failed. The source is saved; add the place manually." }));
+      result = { status: "failed", metadata: {}, candidates: [],
+        error: error instanceof Error ? error.message.slice(0, 300) : "Inspection failed. The source is saved; add the place manually." };
     }
+    const metadata = { ...(source.extraction?.metadata ?? {}), ...result.metadata };
+    if (result.status === "pending") {
+      checked(await db.rpc("pal_complete_source", { p_id: source.id, p_result: {
+        status: "resolving", provider_job_id: result.jobId, extraction: { metadata }, metadata, expected_attempt: source.attempts,
+      } }));
+      return;
+    }
+    if (result.status === "failed") {
+      const reply = await sourceReply({ status: "failed", metadata, candidates: [] });
+      checked(await db.rpc("pal_complete_source", { p_id: source.id, p_result: {
+        status: "failed", expected_attempt: source.attempts, error: result.error, reply,
+      } }));
+      return;
+    }
+    // Database failures retain the processing lease for retry, rather than falsely failing a video.
+    checked(await db.from("sources").update({ extraction: { metadata, places: result.candidates } }).eq("id", source.id).eq("attempts", source.attempts));
+    const candidates = await Promise.all(result.candidates.map(async candidate => {
+      const query = [candidate.name, candidate.city || candidate.address].filter(Boolean).join(" ").slice(0, 200);
+      const options = await resolvePlace(query).catch(() => []);
+      return { ...candidate, options };
+    }));
+    const reply = await sourceReply({ status: "needs_confirmation", metadata, candidates });
+    checked(await db.rpc("pal_complete_source", { p_id: source.id, p_result: {
+      status: "needs_confirmation", title: typeof metadata.title === "string" ? metadata.title : undefined, expected_attempt: source.attempts,
+      extraction: { metadata, places: result.candidates }, metadata, candidates, reply,
+    } }));
   }));
   return sources.length;
 }

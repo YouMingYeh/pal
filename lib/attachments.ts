@@ -88,8 +88,12 @@ export async function sendAttachment(group: string, owner: string, input: Input,
   // canonical representation regardless of the client's spelling.
   group = id.parse(group).toLowerCase();
   owner = id.parse(owner).toLowerCase();
-  const media = await normalizeAttachment(file, input.kind), db = admin();
-  const existing = checked(await db.from("message_attachments").select("*").eq("group_id", group).eq("uploader_id", owner).eq("client_id", input.client_id).maybeSingle()) as Attachment | null;
+  const db = admin();
+  const [media, existing] = await Promise.all([
+    normalizeAttachment(file, input.kind),
+    db.from("message_attachments").select("object_path").eq("group_id", group).eq("uploader_id", owner).eq("client_id", input.client_id).maybeSingle()
+      .then(result => checked(result) as Pick<Attachment, "object_path"> | null),
+  ]);
   // A replay passes through the authoritative RPC without uploading another blob.
   const path = existing?.object_path ?? `${group}/${owner}/${randomUUID()}.${input.kind === "image" ? "jpg" : "m4a"}`;
   if (!existing) checked(await db.storage.from("message-attachments").upload(path, media.bytes, { contentType: media.mime_type, cacheControl: "3600", upsert: false }));

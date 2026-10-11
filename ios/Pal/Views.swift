@@ -49,24 +49,41 @@ private struct PalSendButton: View {
 struct PalTypingLane: View {
     var visible: Bool
     var animated: Bool
+    var onPalTap: (() -> Void)? = nil
     @ScaledMetric(relativeTo: .body) private var height: CGFloat = 40
     var body: some View {
         HStack(spacing: 6) {
             if visible {
-                PalMascotAvatar(emotion: "attentif", animated: animated, size: 36)
+                if let onPalTap {
+                    Button(action: onPalTap) { PalMascotAvatar(emotion: "attentif", animated: animated, size: 36).contentShape(Rectangle().inset(by: -4)) }
+                        .buttonStyle(.plain).accessibilityLabel("Message Pal")
+                } else { PalMascotAvatar(emotion: "attentif", animated: animated, size: 36) }
                 Text("Pal is typing…").font(.body).foregroundStyle(.secondary)
             }
             Spacer()
-        }.frame(height: height).accessibilityElement(children: .combine).accessibilityHidden(!visible)
+        }.frame(height: height).accessibilityElement(children: .contain).accessibilityHidden(!visible)
+    }
+}
+
+enum PalChatNavigation {
+    static func path(in groups: [ChatGroup], from path: [UUID]) -> [UUID]? {
+        guard let id = groups.first(where: \.isDirect)?.id else { return nil }
+        if let index = path.firstIndex(of: id) { return Array(path.prefix(through: index)) }
+        return path + [id]
     }
 }
 
 struct RootView: View {
+    @StateObject private var locationSharing = PalLocationSharing()
     @EnvironmentObject private var store: PalStore
     @Environment(\.scenePhase) private var phase
     var body: some View {
         Group { if store.isSignedIn { GroupsView() } else { LoginView() } }
             .tint(PalTheme.ink)
+            .environment(\.palLocationSharing, locationSharing)
+            .onAppear { locationSharing.configure(store: store, active: phase == .active) }
+            .onChange(of: store.userID) { _, _ in locationSharing.configure(store: store, active: phase == .active) }
+            .onChange(of: store.groups) { _, _ in locationSharing.configure(store: store, active: phase == .active) }
             .onOpenURL { store.handleURL($0) }
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { if let url = $0.webpageURL { store.handleURL(url) } }
             .task(id: store.userID) {
@@ -87,6 +104,7 @@ struct RootView: View {
                 if phase == .active, store.isSignedIn { await store.runRealtime() }
             }
             .onChange(of: phase) { _, value in
+                locationSharing.configure(store: store, active: value == .active)
                 if value == .active, store.isSignedIn {
                     Task {
                         if store.profile?.notificationPreferences?.enabled != false { await PalNotifications.registerIfAuthorized() }
@@ -299,6 +317,7 @@ struct ChatTranscriptRow: Identifiable {
 struct ChatView: View {
     let group: ChatGroup
     @EnvironmentObject private var store: PalStore
+    @Environment(\.palLocationSharing) private var locationSharing
     @Environment(\.scenePhase) private var phase
     private var messages: [ChatMessage] { store.cachedMessages[group.id] ?? [] }
     @State private var draft = ""
@@ -314,9 +333,11 @@ struct ChatView: View {
     @State private var selectedMentions: [MessageMention: String] = [:]
     @State private var details = false
     @State private var calendar = false
-    @State private var map = false
+    @State private var hangoutIdeas = false
     @State private var routeCard: MessageCard?
     @State private var pollingError: String?
+    @State private var palChatOpening = false
+    @State private var palChatIssue: String?
     @State private var lastRead: UUID?
     @State private var typingExpired = false
     @State private var atBottom = true
@@ -353,10 +374,11 @@ struct ChatView: View {
             .modifier(ChatNavigationSurface())
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    if group.isDirect { HStack(spacing: 8) { PalMascotAvatar(animated: phase == .active, size: 36); Text("Pal").font(.title3.weight(.semibold)) } }
+                    if group.isDirect { Button(action: openPalChat) { HStack(spacing: 8) { PalMascotAvatar(animated: phase == .active, size: 36); Text("Pal").font(.title3.weight(.semibold)).foregroundStyle(.primary) } }.buttonStyle(.plain).accessibilityLabel("Message Pal") }
                     else { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, url: group.avatarURL, size: 36); Text(group.name).font(.title3.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityLabel("Group details") }
                 }
-                if !group.isDirect { ToolbarItem(placement: .topBarTrailing) { HStack { Button { calendar = true } label: { Image(systemName: "calendar") }.accessibilityLabel("Group calendar"); Button { map = true } label: { Image(systemName: "map") }.accessibilityLabel("Saved places") } } }
+                if !group.isDirect { ToolbarItem(placement: .topBarTrailing) { Button { hangoutIdeas = true } label: { Image(systemName: "bookmark") }.accessibilityLabel("Hangout ideas") } }
+                if !group.isDirect { ToolbarItem(placement: .topBarTrailing) { Button { calendar = true } label: { Image(systemName: "calendar") }.accessibilityLabel("Group calendar") } }
             }
             .photosPicker(isPresented: $showingPhotos, selection: $selectedPhoto, matching: .images)
             .fullScreenCover(isPresented: $showingCamera) { CameraCapture(onCapture: { data in Task { await preparePhoto(data) } }, onError: { store.report($0) }) }
@@ -371,9 +393,9 @@ struct ChatView: View {
             }
             .sheet(isPresented: $details) { NavigationStack { GroupDetailsView(group: group) } }
             .navigationDestination(isPresented: $calendar) { GroupCalendarView(group: group) }
-            .navigationDestination(isPresented: $map) { GroupMapView(group: group) }
+            .navigationDestination(isPresented: $hangoutIdeas) { HangoutIdeasView(group: group) }
             .sheet(item: $routeCard) { card in NavigationStack { PalCardView(group: group, card: card).padding().navigationTitle("Details").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { routeCard = nil } } } } }
-            .onChange(of: store.requestedEntity) { _, card in if let card { if !["options", "choice", "availability"].contains(card.type) { routeCard = card }; store.requestedEntity = nil } }
+            .onChange(of: store.requestedEntity) { _, card in if let card { if !["options", "choice", "availability", "question"].contains(card.type) { routeCard = card }; store.requestedEntity = nil } }
             .task(id: store.typingDeadline(in: group.id)) {
                 typingExpired = false
                 guard let expiry = store.typingDeadline(in: group.id) else { return }
@@ -382,7 +404,7 @@ struct ChatView: View {
             }
             .task(id: phase) {
                 guard phase == .active else { return }
-                if let card = store.requestedEntity { if !["options", "choice", "availability"].contains(card.type) { routeCard = card }; store.requestedEntity = nil }
+                if let card = store.requestedEntity { if !["options", "choice", "availability", "question"].contains(card.type) { routeCard = card }; store.requestedEntity = nil }
                 while !Task.isCancelled { await refresh(); do { try await Task.sleep(for: .seconds(2)) } catch { break } }
             }
     }
@@ -393,7 +415,7 @@ struct ChatView: View {
                 if pollingError == nil { ProgressView("Loading messages…").padding(.vertical, 36) }
                 else { Button("Try again") { Task { await refresh() } }.padding(.vertical, 36) }
             }
-            if items.isEmpty, store.cachedMessages[group.id] != nil { VStack(spacing: 12) { PalMascotAvatar(size: 54).accessibilityHidden(true); Text("No messages yet").font(.subheadline).foregroundStyle(.secondary) }.padding(.horizontal, 28).padding(.top, 36) }
+            if items.isEmpty, store.cachedMessages[group.id] != nil { VStack(spacing: 12) { Button(action: openPalChat) { PalMascotAvatar(animated: phase == .active, size: 54) }.buttonStyle(.plain).accessibilityLabel("Message Pal"); Text("No messages yet").font(.subheadline).foregroundStyle(.secondary) }.padding(.horizontal, 28).padding(.top, 36) }
             ForEach(items) { row in
                 VStack(spacing: 9) {
                     if row.startsDay, let date = row.date {
@@ -420,32 +442,29 @@ struct ChatView: View {
     }
     private var composer: some View {
         VStack(spacing: 8) {
-            PalTypingLane(visible: !typingExpired && store.isPalTyping(in: group.id), animated: phase == .active)
+            PalTypingLane(visible: !typingExpired && store.isPalTyping(in: group.id), animated: phase == .active, onPalTap: openPalChat)
                 .padding(.horizontal, 18)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    if group.isDirect {
+                    if let query = PalMentions.query(in: draft) {
+                        if "pal".hasPrefix(query.lowercased()) { mentionButton(name: "Pal", mention: MessageMention(type: "pal"), url: nil) }
+                        ForEach(PalMentions.candidates(in: state.members, query: query, excluding: store.userID)) { member in
+                            mentionButton(name: member.displayName ?? "Member", mention: MessageMention(type: "user", userID: member.userID), url: member.avatarURL)
+                        }
+                    } else if group.isDirect {
                         quickAction("Summary", emoji: "💬", prompt: "@Pal, summarize recent conversations across all my current groups, including anything I need to respond to.")
                         quickAction("Plans", emoji: "📅", prompt: "@Pal, list recent and upcoming plans across all my current groups. Show which are proposed, confirmed or cancelled, and my attendance.")
                     } else {
                         quickAction("Plans", emoji: "📅", prompt: "@Pal, show our recent plans and what still needs a response.")
                         quickAction("Schedule", emoji: "🕒", prompt: "@Pal, show everyone's shared availability and upcoming group schedule. Keep unanswered availability visibly unknown.")
-                        quickAction("Hangout", emoji: "🍜", prompt: "@Pal, suggest two or three food spots or hangout ideas based on our recent chats and saved places.")
+                        Button { hangoutIdeas = true } label: { HStack(spacing: 6) { Text("🍜").accessibilityHidden(true); Text("Hangout").font(.subheadline.weight(.medium)) }.padding(.horizontal, 14).frame(minHeight: 44).foregroundStyle(.primary).modifier(PalGlass(cornerRadius: 22)) }.buttonStyle(.plain).accessibilityLabel("Hangout ideas").accessibilityHint("Browse ideas saved from this chat")
                     }
                 }.padding(.horizontal, 15)
             }.frame(height: 44)
             if let pollingError { HStack { Text(messages.isEmpty ? "Couldn’t load messages." : "Updates paused. Your messages are still here.").font(.caption).foregroundStyle(.secondary); Button("Retry") { Task { await refresh() } }.font(.caption.weight(.semibold)) }.padding(.horizontal, 16).accessibilityHint(pollingError) }
+            if let palChatIssue { HStack { Text(palChatIssue).font(.caption).foregroundStyle(.secondary); Button("Try again", action: openPalChat).font(.caption.weight(.semibold)).disabled(palChatOpening) }.padding(.horizontal, 16) }
             if let reply { HStack { Text("Reply to \(memberName(reply)): \(reply.body)").font(.caption).lineLimit(1); Spacer(); Button { self.reply = nil } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Cancel reply").frame(minWidth: 44, minHeight: 44) }.padding(.horizontal, 15) }
-            if let query = PalMentions.query(in: draft) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        if "pal".hasPrefix(query.lowercased()) { mentionButton(name: "Pal", mention: MessageMention(type: "pal"), url: nil) }
-                        ForEach(state.members.filter { $0.userID != store.userID && ($0.displayName ?? "Member").localizedCaseInsensitiveContains(query) }) { member in
-                            mentionButton(name: member.displayName ?? "Member", mention: MessageMention(type: "user", userID: member.userID), url: member.avatarURL)
-                        }
-                    }.padding(.horizontal, 16)
-                }.frame(height: 44)
-            }
+            if !group.isDirect, let locationSharing { LocationSharingStatus(group: group, sharing: locationSharing) }
             if let attachment { DraftMediaPreview(draft: attachment, onRemove: removeAttachment).padding(.horizontal, 15) }
             if processingPhoto { ProgressView("Preparing photo…").font(.caption) }
             HStack(alignment: .bottom, spacing: 10) {
@@ -453,10 +472,38 @@ struct ChatView: View {
                     Button("Photos", systemImage: "photo") { showingPhotos = true }
                     Button("Camera", systemImage: "camera") { showingCamera = true }
                     Button("Audio", systemImage: "waveform") { showingAudio = true }
+                    if !group.isDirect, let locationSharing {
+                        LocationSharingMenu(group: group, sharing: locationSharing)
+                    }
                 } label: { Image(systemName: "plus").font(.title3.weight(.medium)).frame(width: 44, height: 44).foregroundStyle(.primary).modifier(PalGlass(cornerRadius: 22)) }.accessibilityLabel("Add attachment").disabled(processingPhoto)
                 TextField(group.isDirect ? "Message Pal" : "Message", text: $draft, axis: .vertical).font(.title3).lineLimit(1...5).padding(12).modifier(PalGlass(cornerRadius: 25)).accessibilityLabel(group.isDirect ? "Message Pal" : "Message")
                 PalSendButton(disabled: processingPhoto || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachment == nil), action: sendDraft)
             }.padding(.horizontal, 15).padding(.bottom, 10)
+        }
+    }
+    private func openPalChat() {
+        guard !palChatOpening, store.userID != nil else { return }
+        palChatIssue = nil
+        if let path = PalChatNavigation.path(in: store.groups, from: store.path) {
+            store.requestedEntity = nil
+            if store.path != path { store.path = path }
+            return
+        }
+        let userID = store.userID
+        let navigation = store.path
+        palChatOpening = true
+        Task {
+            defer { palChatOpening = false }
+            do {
+                try await store.loadGroups()
+                guard userID == store.userID, store.path == navigation else { return }
+                guard let path = PalChatNavigation.path(in: store.groups, from: store.path) else {
+                    palChatIssue = "Couldn’t open your Pal chat."
+                    return
+                }
+                store.requestedEntity = nil
+                if store.path != path { store.path = path }
+            } catch { if !PalCancellation.isCancellation(error), userID == store.userID, store.path == navigation { palChatIssue = "Couldn’t open your Pal chat." } }
         }
     }
     private func quickAction(_ title: String, emoji: String, prompt: String) -> some View {
@@ -478,7 +525,7 @@ struct ChatView: View {
         } label: {
             HStack(spacing: 6) {
                 if mention.type == "pal" { PalMascotAvatar(size: 24) } else { AvatarView(name: name, url: url, size: 24) }
-                Text(name).font(.subheadline.weight(.medium))
+                Text(name).font(.subheadline.weight(.medium)).lineLimit(1).fixedSize(horizontal: true, vertical: false)
             }.padding(.horizontal, 10).frame(minHeight: 44).background(Color(uiColor: .secondarySystemBackground), in: Capsule())
         }.buttonStyle(.plain).disabled(PalMentions.retained(selectedMentions, in: draft).count >= 8 && selectedMentions[mention] == nil).accessibilityLabel("Mention " + name)
     }
@@ -512,7 +559,7 @@ struct ChatView: View {
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
                 if !mine && (showSender || message.role == "pal") {
                     if message.role == "pal" {
-                        HStack(spacing: 7) { PalMascotAvatar(emotion: message.emotion, animated: phase == .active, size: 36); Text("Pal").font(.body.weight(.medium)).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5)
+                        Button(action: openPalChat) { HStack(spacing: 7) { PalMascotAvatar(emotion: message.emotion, animated: phase == .active, size: 36); Text("Pal").font(.body.weight(.medium)).foregroundStyle(.secondary) }.contentShape(Rectangle().inset(by: -4)) }.buttonStyle(.plain).accessibilityLabel("Message Pal").padding(.horizontal, 4).padding(.top, 5)
                     } else if let member = state.members.first(where: { $0.userID == message.senderID }) {
                         NavigationLink { MemberDetailView(groupID: group.id, member: member) } label: {
                             HStack(spacing: 7) { AvatarView(name: memberName(message), url: member.avatarURL, size: 36); Text(memberName(message)).font(.body.weight(.medium)).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5)
@@ -527,7 +574,7 @@ struct ChatView: View {
                     Text(PalText.linked(body, markdown: message.role == "pal", mentions: message.mentions, members: state.members)).font(.title3).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                         .contextMenu { messageMenu(message, mine: mine) }
                 }
-                ForEach(message.cards.filter { ["plan", "rsvp", "options", "choice", "availability"].contains($0.type) }) { card in PalCardView(group: group, card: card) }
+                ForEach(message.cards.filter { ["plan", "rsvp", "options", "choice", "availability", "question"].contains($0.type) && ($0.type != "question" || $0.questionText(for: group.id) != nil) }) { card in PalCardView(group: group, card: card, sourceMessageID: message.id).contextMenu { messageMenu(message, mine: mine) } }
                 ForEach(message.attachments) { media in MessageAttachmentView(attachment: media, onRetry: { Task { await refresh() } }).contextMenu { messageMenu(message, mine: mine) } }
                 if !reactions.isEmpty { HStack(spacing: 4) { ForEach(Array(Set(reactions.map(\.emoji))).sorted(), id: \.self) { emoji in let count = reactions.filter { $0.emoji == emoji }.count; let selected = reactions.contains { $0.emoji == emoji && $0.userID == store.userID }; Button { react(emoji, to: message) } label: { Text("\(emoji) \(count)").font(.caption).padding(.horizontal, 9).padding(.vertical, 5).background(selected ? PalTheme.ink.opacity(0.12) : Color(uiColor: .tertiarySystemFill), in: Capsule()) }.buttonStyle(.plain).frame(minHeight: 44).accessibilityLabel("\(emoji), \(count) reactions").accessibilityValue(selected ? "You reacted" : "").accessibilityHint(selected ? "Remove your reaction" : "Add your reaction") } } }
             }

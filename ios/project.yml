@@ -59,6 +59,7 @@ targets:
         PalPushEnvironment: $(PAL_PUSH_ENVIRONMENT)
         UILaunchStoryboardName: LaunchScreen
         NSCameraUsageDescription: Take a photo for a chat or scan a group invite.
+        NSLocationWhenInUseUsageDescription: Share your approximate location with groups you choose while Pal is open. Sharing expires after an hour without updates.
         NSMicrophoneUsageDescription: Record a voice message to send to your group.
         CFBundleURLTypes:
           - CFBundleURLName: com.pal.spike

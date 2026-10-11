@@ -16,17 +16,19 @@ do $$
 declare activity jsonb; j public.agent_jobs; n bigint;
 begin
   activity:=public.pal_group_state(current_setting('pal.mascot.group')::uuid)->'pal_activity';
-  assert activity->>'activity'='thinking' and activity->>'status'='accepted','New queued chat animates immediately during its existing debounce';
-  assert (activity->>'expires_at')::timestamptz=now()+interval '5 minutes','Future accepted work has a deadline bounded from creation';
+  assert activity->>'activity'='idle','Queued group work does not claim typing before a reply decision';
+  assert activity->>'expires_at' is null,'Unchosen group work has no typing timer';
   update public.agent_jobs set status='cancelled' where group_id=current_setting('pal.mascot.group')::uuid and id<>current_setting('pal.mascot.job')::uuid;
   update public.agent_jobs set run_after=now() where id=current_setting('pal.mascot.job')::uuid;
   activity:=public.pal_group_state(current_setting('pal.mascot.group')::uuid)->'pal_activity';
-  assert activity->>'activity'='thinking' and activity->>'status'='accepted' and activity->>'job_id'=current_setting('pal.mascot.job'),'Accepted due chat exposes its actual stable job ID';
-  assert (activity->>'expires_at')::timestamptz=now()+interval '5 minutes','Accepted thinking has a bounded deadline';
+  assert activity->>'activity'='idle','Due group work still awaits an actual reply decision';
+  assert activity->>'expires_at' is null,'Queued shared work exposes no typing deadline';
   select * into j from public.claim_agent_jobs(1);
+  assert public.pal_group_state(j.group_id)->'pal_activity'->>'activity'='idle','Running decision work is not typing';
+  assert public.pal_begin_reply(j.id,j.attempts),'A current worker may choose to reply';
   activity:=public.pal_group_state(j.group_id)->'pal_activity';
-  assert activity->>'status'='running' and activity->>'job_id'=j.id::text,'Claim preserves stable job ID and exposes real running state';
-  assert (activity->>'expires_at')::timestamptz=j.lease_until,'Running thinking is bounded by its actual lease';
+  assert activity->>'activity'='typing' and activity->>'status'='running' and activity->>'job_id'=j.id::text,'Claim preserves stable job ID and exposes real running state';
+  assert (activity->>'expires_at')::timestamptz=(select least(lease_until,reply_started_at+interval '20 seconds') from public.agent_jobs where id=j.id),'Typing is capped by its short reply window and actual lease';
   assert not public.complete_agent_job_with_emotion(j.id,j.attempts+1,'Wrong attempt',null,'heureux'),'Stale worker cannot publish';
   begin
     perform public.complete_agent_job_with_emotion(j.id,j.attempts,'Unknown emotion',null,'invented');

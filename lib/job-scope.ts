@@ -15,12 +15,14 @@ export async function jobScope(jobId: string) {
   if (job.status !== "running" || !job.lease_until || Date.parse(job.lease_until) <= Date.now()) {
     throw new Error("Job lease is no longer active.");
   }
-  const membership = checked(await db.from("group_members").select("group_id")
-    .eq("group_id", job.group_id).eq("user_id", job.requester_id).maybeSingle());
-  if (!membership) throw new Error("Requester is no longer a group member.");
   const ids = job.batch_message_ids?.length ? job.batch_message_ids : [job.message_id];
-  const batch = checked(await db.from("messages").select("id,group_id,sender_id,role,body,created_at,mentions,reply_to_id")
-    .eq("group_id", job.group_id).eq("role", "user").in("id", ids).order("created_at")) as SourceMessage[];
+  const [membershipResult, batchResult] = await Promise.all([
+    db.from("group_members").select("group_id").eq("group_id", job.group_id).eq("user_id", job.requester_id).maybeSingle(),
+    db.from("messages").select("id,group_id,sender_id,role,body,created_at,mentions,reply_to_id")
+      .eq("group_id", job.group_id).eq("role", "user").in("id", ids).order("created_at"),
+  ]);
+  if (!checked(membershipResult)) throw new Error("Requester is no longer a group member.");
+  const batch = checked(batchResult) as SourceMessage[];
   if (!batch?.length && job.job_kind !== "weekly") throw new Error("Task source messages are unavailable.");
   return { job, db, batch: batch ?? [] };
 }

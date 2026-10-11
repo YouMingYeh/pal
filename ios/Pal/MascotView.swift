@@ -20,6 +20,7 @@ struct PalMascotAvatar: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var appeared = false
     @State private var visible = false
+    @State private var windowBounds: CGRect = .zero
     @State private var ready = false
     @State private var failed = false
     private var expression: String { activity == .thinking ? "attentif" : PalMascotEmotion.normalized(emotion) }
@@ -43,16 +44,20 @@ struct PalMascotAvatar: View {
         .allowsHitTesting(false).accessibilityHidden(true)
         .onGeometryChange(for: Bool.self) { geometry in
             let frame = geometry.frame(in: .global)
-            let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-                .flatMap(\.windows).first(where: \.isKeyWindow)
-            return window.map { frame.width > 0 && frame.height > 0 && frame.intersects($0.bounds) } ?? false
+            return frame.width > 0 && frame.height > 0 && frame.intersects(windowBounds)
         } action: { visible = $0 }
-        .onAppear { appeared = true }
+        .onAppear { appeared = true; updateWindowBounds() }
         .onDisappear { appeared = false; visible = false; ready = false }
         .onChange(of: live) { _, _ in ready = false }
         .onChange(of: animated) { _, _ in failed = false; ready = false }
         .onChange(of: activity) { _, _ in failed = false }
         .onChange(of: emotion) { _, _ in failed = false }
+        .onChange(of: scenePhase) { _, value in if value == .active { updateWindowBounds() } }
+    }
+    private func updateWindowBounds() {
+        // Geometry transforms may run on SwiftUI's renderer thread; UIKit reads stay in UI callbacks.
+        windowBounds = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).first(where: \.isKeyWindow)?.bounds ?? .zero
     }
     private var player: some View {
         MascotWebPlayer(expression: expression, ready: $ready, failed: $failed)

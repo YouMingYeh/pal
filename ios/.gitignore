@@ -4,3 +4,6 @@ build/
 xcuserdata/
 build-device/
 build-packages/
+build-location/
+
+build-cards/

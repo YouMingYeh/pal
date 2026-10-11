@@ -209,7 +209,7 @@ enum PalRealtimeEvent: Equatable {
 
 enum PalRealtimeProtocol {
     static let topic = "realtime:pal-messages"
-    static let tables = ["messages", "message_attachments", "message_reactions", "sources", "places", "place_contributors", "polls", "poll_responses", "plans", "plan_rsvps", "reminders", "member_memories"]
+    static let tables = ["messages", "message_attachments", "message_reactions", "sources", "places", "place_contributors", "polls", "poll_responses", "plans", "plan_rsvps", "reminders", "member_memories", "group_member_locations"]
 
     static func endpoint(url: URL, key: String) throws -> URL {
         guard !key.isEmpty, !key.hasPrefix("sb_secret_"),

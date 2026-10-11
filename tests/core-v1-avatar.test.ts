@@ -75,3 +75,22 @@ test("unavailable photos cannot break chat state or leak another member's object
   assert.equal(foreign.avatar_url, null);
   assert.equal(requested, false);
 });
+
+test("concurrent requests share private photo signing and failed signing can retry", async () => {
+  const owner = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const profile = { user_id: owner, avatar_path: `${owner}/ffffffff-ffff-4fff-8fff-ffffffffffff.jpg` };
+  let calls = 0;
+  let finish: (url: string) => void = () => assert.fail("Signing did not start");
+  const sign = async () => { calls++; return new Promise<string>(resolve => { finish = resolve; }); };
+  const first = signedAvatar(profile, true, sign), second = signedAvatar(profile, true, sign);
+  assert.equal(calls, 1, "The same member appearing in several rooms needs one signing request.");
+  finish("https://storage.example/signed-photo");
+  const results = await Promise.all([first, second]);
+  assert.equal(results[0].avatar_url, results[1].avatar_url);
+  assert.equal((await signedAvatar(profile, true, sign)).avatar_url, results[0].avatar_url);
+  assert.equal(calls, 1);
+  const another = { ...profile, avatar_path: `${owner}/11111111-1111-4111-8111-111111111111.jpg` };
+  const unavailable = async () => { throw new Error("Storage unavailable"); };
+  await assert.rejects(signedAvatar(another, true, unavailable), /Storage unavailable/);
+  assert.equal((await signedAvatar(another, true, async () => "https://storage.example/retried")).avatar_url, "https://storage.example/retried");
+});

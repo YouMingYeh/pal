@@ -65,8 +65,21 @@ struct MessageCard: Codable, Hashable, Identifiable {
     var type: String
     var entityID: UUID
     var sourceID: UUID?
-    var id: String { type + entityID.uuidString }
-    enum CodingKeys: String, CodingKey { case type; case entityID = "entity_id", sourceID = "source_id" }
+    var question: String? = nil
+    var suggestions: [String]? = nil
+    var id: String { type + entityID.uuidString + (type == "question" ? (question ?? "") : "") }
+    var suggestedAnswers: [String] {
+        guard type == "question", let suggestions, (2...4).contains(suggestions.count) else { return [] }
+        let answers = suggestions.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard answers.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 60 }), Set(answers.map { $0.lowercased() }).count == answers.count else { return [] }
+        return answers
+    }
+    func questionText(for groupID: UUID) -> String? {
+        guard type == "question", entityID == groupID, let question, !suggestedAnswers.isEmpty else { return nil }
+        let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !text.isEmpty && text.utf16.count <= 200 ? text : nil
+    }
+    enum CodingKeys: String, CodingKey { case type, question, suggestions; case entityID = "entity_id", sourceID = "source_id" }
 }
 struct MessageMention: Codable, Hashable {
     var type: String
@@ -131,6 +144,7 @@ struct ChatMessage: Decodable, Identifiable, Equatable {
             var text: String?
             switch card.type {
             case "plan", "rsvp", "options", "choice", "availability": continue
+            case "question": if card.questionText(for: groupID) != nil { continue }
             case "reminder":
                 if let reminder = state.reminders.first(where: { $0.id == card.entityID }) {
                     text = [reminder.body, PalDate.date(reminder.dueAt)?.formatted(date: .abbreviated, time: .shortened), reminder.status == "cancelled" ? "Cancelled" : nil].compactMap { $0 }.joined(separator: " · ")
@@ -158,6 +172,7 @@ struct ChatMessage: Decodable, Identifiable, Equatable {
             var title: String?
             switch card.type {
             case "plan", "rsvp": title = state.plans.first { $0.id == card.entityID }?.title
+            case "question": title = card.questionText(for: groupID)
             case "reminder":
                 title = state.reminders.first { $0.id == card.entityID }?.body
                 if let title, value == "Reminder: " + title { return nil }
@@ -213,6 +228,9 @@ enum PalMentions {
     static func inserting(name: String, into text: String) -> String {
         guard let range = range(in: text) else { return text }
         return text.replacingCharacters(in: range, with: name + " ")
+    }
+    static func candidates(in members: [GroupMember], query: String, excluding userID: UUID?) -> [GroupMember] {
+        members.filter { $0.userID != userID && (query.isEmpty || ($0.displayName ?? "Member").localizedCaseInsensitiveContains(query)) }
     }
     static func retained(_ selected: [MessageMention: String], in text: String) -> [MessageMention] {
         selected.filter { _, name in
@@ -423,14 +441,52 @@ struct GroupState: Decodable, Equatable {
     var reactions: [MessageReaction]
     var settings: GroupSettings?
     var palActivity: PalWorkActivity? = nil
+    var locations: [GroupMemberLocation] = []
     enum CodingKeys: String, CodingKey {
-        case members, places, sources, polls, plans, memories, reminders, reactions, settings
+        case members, places, sources, polls, plans, memories, reminders, reactions, settings, locations
         case palActivity = "pal_activity"
     }
     static var empty: GroupState { GroupState(members: [], places: [], sources: [], polls: [], plans: [], memories: [], reminders: [], reactions: [], settings: nil) }
 }
 
-/// A live server lease is the only authority for showing Pal at work.
+struct GroupMemberLocation: Decodable, Equatable, Identifiable {
+    let userID: UUID
+    let latitude: Double
+    let longitude: Double
+    let accuracy: Double
+    let updatedAt: String
+    let expiresAt: String
+    var id: UUID { userID }
+    enum CodingKeys: String, CodingKey {
+        case latitude, longitude, accuracy
+        case userID = "user_id", updatedAt = "updated_at", expiresAt = "expires_at"
+    }
+    func isFresh(at now: Date = Date()) -> Bool {
+        guard let expiry = PalDate.date(expiresAt), let updated = PalDate.date(updatedAt) else { return false }
+        return expiry > now && updated <= now.addingTimeInterval(30) && now.timeIntervalSince(updated) <= 3600
+            && latitude.isFinite && (-90...90).contains(latitude) && longitude.isFinite && (-180...180).contains(longitude)
+            && accuracy.isFinite && (0...10_000).contains(accuracy)
+    }
+}
+
+extension GroupState {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        members = try c.decode([GroupMember].self, forKey: .members)
+        places = try c.decode([GroupPlace].self, forKey: .places)
+        sources = try c.decode([GroupSource].self, forKey: .sources)
+        polls = try c.decode([GroupPoll].self, forKey: .polls)
+        plans = try c.decode([GroupPlan].self, forKey: .plans)
+        memories = try c.decode([GroupMemory].self, forKey: .memories)
+        reminders = try c.decode([GroupReminder].self, forKey: .reminders)
+        reactions = try c.decode([MessageReaction].self, forKey: .reactions)
+        settings = try c.decodeIfPresent(GroupSettings.self, forKey: .settings)
+        palActivity = try c.decodeIfPresent(PalWorkActivity.self, forKey: .palActivity)
+        locations = try c.decodeIfPresent([GroupMemberLocation].self, forKey: .locations) ?? []
+    }
+}
+
+/// Every room shows only a bounded explicit reply phase, never queued or decision work.
 struct PalWorkActivity: Decodable, Equatable {
     var activity: String
     var jobID: UUID?
@@ -438,7 +494,8 @@ struct PalWorkActivity: Decodable, Equatable {
     var expiresAt: String?
     enum CodingKeys: String, CodingKey { case activity, status; case jobID = "job_id", expiresAt = "expires_at" }
     func isThinking(at now: Date = Date()) -> Bool {
-        activity == "thinking" && jobID != nil && ["accepted", "running"].contains(status ?? "") && (expiresAt.flatMap(PalDate.date).map { $0 > now } ?? false)
+        let replying = activity == "typing" && status == "running"
+        return replying && jobID != nil && (expiresAt.flatMap(PalDate.date).map { $0 > now } ?? false)
     }
 }
 

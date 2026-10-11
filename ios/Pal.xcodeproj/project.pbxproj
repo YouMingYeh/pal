@@ -24,6 +24,7 @@
 		366EC1B7AD109BA24AB7CFB7 /* MascotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D72D1A669F60D129E92ADFD0 /* MascotTests.swift */; };
 		3A76AFF126F29A8DDCFEFD6A /* PalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3199B39DF7A2E23079D49E8 /* PalModels.swift */; };
 		3BF813BC992E4B0DC59D1E1B /* LaunchEntrance.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8269DC8AA3590DC731E4ED2 /* LaunchEntrance.swift */; };
+		3C1480C5E638AC1495A39B84 /* HangoutIdeasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5A1A2C133138F708E4D3346 /* HangoutIdeasView.swift */; };
 		4C95A69E46B40FF2430AD091 /* RealtimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EF992B57DBD85ABDC9EB367 /* RealtimeTests.swift */; };
 		521BD5720E5AEABE226DD814 /* Mascot in Resources */ = {isa = PBXBuildFile; fileRef = 602530206C04C0BB566C541E /* Mascot */; };
 		54BA4FB3AB449CFF1C0F9498 /* MediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D272BA7F13EC017888610A1D /* MediaViews.swift */; };
@@ -38,6 +39,7 @@
 		70F685831C9FE3B88FE39DE8 /* ThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 816049EC4FD401EE60C515C3 /* ThemeTests.swift */; };
 		7460D1FA42AD213B00A903CD /* PalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C88929C3861C7A8FEB94B9D /* PalApp.swift */; };
 		76F13E42DAA11B223834AEB4 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 42C80E9C3E04145FC1BDC2E1 /* Kingfisher */; };
+		7F5C91E12949D95DB9C7C7CE /* LocationSharingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59DCCD63D811E19B3BCE694F /* LocationSharingTests.swift */; };
 		8F08E1EC98CFC88D06A5F7C8 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E1E2F9EF8B322C89126EA /* Session.swift */; };
 		8F8FCE6561D85B1DDFF7B026 /* PalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6BC3535EFC4889BBE81CF1F /* PalStore.swift */; };
 		97BD8AE001629527A9B2D739 /* PalShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BB4A5335926110F52607F2F2 /* PalShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -46,6 +48,7 @@
 		AC2480442505ED7468EDD577 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 7BB90F5A51176B7FE66098CD /* Kingfisher */; };
 		AD3E8CF764BF0BD1003960CB /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76582FE248D91909FDC58AFF /* ShareViewController.swift */; };
 		B906E4629C5D7A2A1FF83DCE /* AppleCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 284C3A207436DC0563A05224 /* AppleCalendar.swift */; };
+		BE4809041ECBE070B85B0309 /* PalLocationSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FD3FA2DF7CC483B2D73E07F /* PalLocationSharing.swift */; };
 		C0F4634D5863364F9CC77957 /* Cards.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA03BD836188F8D6E6DE8284 /* Cards.swift */; };
 		C5E052831ED7696DED5888B8 /* PalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3199B39DF7A2E23079D49E8 /* PalModels.swift */; };
 		D07ED05E11791526B2677280 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 4F34EE4DBDD432BD5535A4A0 /* LaunchScreen.storyboard */; };
@@ -103,6 +106,7 @@
 		4BA5B696C4F2C7FBBF761292 /* MediaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTests.swift; sourceTree = "<group>"; };
 		4F34EE4DBDD432BD5535A4A0 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		4FE700ABBF4FDCAEBE14CB4C /* CalendarViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarViewTests.swift; sourceTree = "<group>"; };
+		59DCCD63D811E19B3BCE694F /* LocationSharingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSharingTests.swift; sourceTree = "<group>"; };
 		602530206C04C0BB566C541E /* Mascot */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Mascot; path = Pal/Mascot; sourceTree = SOURCE_ROOT; };
 		6ECB52FD5C6EA8F4E85582B5 /* Pal.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Pal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6EF992B57DBD85ABDC9EB367 /* RealtimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeTests.swift; sourceTree = "<group>"; };
@@ -112,6 +116,7 @@
 		76EDA2CBAF8D7041AF6AC1AD /* MemberDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemberDetailView.swift; sourceTree = "<group>"; };
 		816049EC4FD401EE60C515C3 /* ThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeTests.swift; sourceTree = "<group>"; };
 		8D7C60E655D843D1BED0D0B2 /* PalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalTests.swift; sourceTree = "<group>"; };
+		8FD3FA2DF7CC483B2D73E07F /* PalLocationSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalLocationSharing.swift; sourceTree = "<group>"; };
 		91916F06B448D4DD9F4899AC /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
 		98BBDEC957AADA768E424224 /* SharePayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePayload.swift; sourceTree = "<group>"; };
 		9C88929C3861C7A8FEB94B9D /* PalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalApp.swift; sourceTree = "<group>"; };
@@ -133,6 +138,7 @@
 		CF1F6907C77B7FC03D7D47D9 /* Pal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pal.entitlements; sourceTree = "<group>"; };
 		D272BA7F13EC017888610A1D /* MediaViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaViews.swift; sourceTree = "<group>"; };
 		D4FCBA439A1A7C765088E3B4 /* MemberDetailTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemberDetailTests.swift; sourceTree = "<group>"; };
+		D5A1A2C133138F708E4D3346 /* HangoutIdeasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HangoutIdeasView.swift; sourceTree = "<group>"; };
 		D72D1A669F60D129E92ADFD0 /* MascotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MascotTests.swift; sourceTree = "<group>"; };
 		DADA4FFAEAFA3D5257E7643D /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
 		E3199B39DF7A2E23079D49E8 /* PalModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalModels.swift; sourceTree = "<group>"; };
@@ -192,6 +198,7 @@
 				37C3463B85AF82F6361DEF50 /* ConversationTests.swift */,
 				B67FC22F8C4D2CA1233F344D /* FetchTests.swift */,
 				A7796669AF9D046DE352DCD3 /* GroupAccessTests.swift */,
+				59DCCD63D811E19B3BCE694F /* LocationSharingTests.swift */,
 				D72D1A669F60D129E92ADFD0 /* MascotTests.swift */,
 				4BA5B696C4F2C7FBBF761292 /* MediaTests.swift */,
 				D4FCBA439A1A7C765088E3B4 /* MemberDetailTests.swift */,
@@ -235,6 +242,7 @@
 				724ED50AEDFF5855BFDA55AB /* FetchViews.swift */,
 				4451B761072B9C27BA52A44D /* GroupAccessViews.swift */,
 				0B6B05588AFFC774B98F506B /* GroupViews.swift */,
+				D5A1A2C133138F708E4D3346 /* HangoutIdeasView.swift */,
 				E5F2FA3E3E82587B666C8E4A /* Info.plist */,
 				F8269DC8AA3590DC731E4ED2 /* LaunchEntrance.swift */,
 				4F34EE4DBDD432BD5535A4A0 /* LaunchScreen.storyboard */,
@@ -244,6 +252,7 @@
 				3F75E356BE8C70C232165D3C /* NativeServices.swift */,
 				CF1F6907C77B7FC03D7D47D9 /* Pal.entitlements */,
 				9C88929C3861C7A8FEB94B9D /* PalApp.swift */,
+				8FD3FA2DF7CC483B2D73E07F /* PalLocationSharing.swift */,
 				E3199B39DF7A2E23079D49E8 /* PalModels.swift */,
 				A6BC3535EFC4889BBE81CF1F /* PalStore.swift */,
 				DADA4FFAEAFA3D5257E7643D /* SettingsViews.swift */,
@@ -400,6 +409,7 @@
 				F9090179D66B71B3752A26E9 /* FetchViews.swift in Sources */,
 				1CD0DE19FB25A806F7AFEDBD /* GroupAccessViews.swift in Sources */,
 				294FF5CD7D1120FBBE94FD30 /* GroupViews.swift in Sources */,
+				3C1480C5E638AC1495A39B84 /* HangoutIdeasView.swift in Sources */,
 				3BF813BC992E4B0DC59D1E1B /* LaunchEntrance.swift in Sources */,
 				1E75C2AF5CA966295961C075 /* MascotView.swift in Sources */,
 				54BA4FB3AB449CFF1C0F9498 /* MediaViews.swift in Sources */,
@@ -408,6 +418,7 @@
 				7460D1FA42AD213B00A903CD /* PalApp.swift in Sources */,
 				D3CB4A68B2DED44BE84AEF19 /* PalFetch.swift in Sources */,
 				003104A752B465E4A7ED9F88 /* PalImageCache.swift in Sources */,
+				BE4809041ECBE070B85B0309 /* PalLocationSharing.swift in Sources */,
 				DB1CFE6B277570AD1831228C /* PalMessageCache.swift in Sources */,
 				3A76AFF126F29A8DDCFEFD6A /* PalModels.swift in Sources */,
 				D215AB1552C1D274670273F4 /* PalRealtime.swift in Sources */,
@@ -446,6 +457,7 @@
 				F9D5AA7E3435ED0A2EF7B498 /* ConversationTests.swift in Sources */,
 				175D749E0DFB86C2808D75D5 /* FetchTests.swift in Sources */,
 				24D28BBFC7BDE1C8C0288D49 /* GroupAccessTests.swift in Sources */,
+				7F5C91E12949D95DB9C7C7CE /* LocationSharingTests.swift in Sources */,
 				366EC1B7AD109BA24AB7CFB7 /* MascotTests.swift in Sources */,
 				5A16361965046D382CE31737 /* MediaTests.swift in Sources */,
 				557625C600BF14299DAEA4C1 /* MemberDetailTests.swift in Sources */,

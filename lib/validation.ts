@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import { questionCard } from "./question-card";
 
 export const id = z.string().uuid();
 export const userMention = z.object({ type: z.literal("user"), user_id: id }).strict();
@@ -98,8 +99,8 @@ const palOutput = z.object({
   body: z.string().trim().min(1).max(4000).describe("One conversational point, usually one or two short sentences. No report preamble or roleplay stage directions. Put the next conversational beat in another message when useful; preserve necessary facts when full details are requested."),
   emotion: palEmotion.catch("fier").optional(), reply_to_id: id.nullable().optional(),
   mentions: palMentions.optional(),
-  card: z.object({ type: z.enum(["plan", "options", "availability", "rsvp", "choice"]), entity_id: id }).strict().nullable().optional()
-    .describe("An existing same-group entity: plan for a future draft/confirmed plan; options for saved place/activity choices; availability for saved dated time choices. RSVP requires a future confirmed plan; choice is a legacy options alias. Never invent an entity or embed UI."),
+  card: z.union([z.object({ type: z.enum(["plan", "options", "availability", "rsvp", "choice"]), entity_id: id }).strict(), questionCard]).nullable().optional()
+    .describe("An existing same-group entity: plan for a future draft/confirmed plan; options for saved choices; availability for saved dated times. RSVP requires confirmation; choice is a legacy alias. For a short question, attach the exact card returned by ask_group_question including its question and suggestions; entity_id is the verified group ID. Free text is always allowed. Never invent an entity or embed UI."),
 }).strict();
 export const agentReply = z.object({
   reply: z.string().max(4000).describe("One short friend-like text for a simple answer or acknowledgement. Use an empty string for genuine silence, or when messages supplies deliberate separate conversational beats."),

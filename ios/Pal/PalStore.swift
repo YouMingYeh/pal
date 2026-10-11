@@ -552,7 +552,6 @@ final class PalStore: ObservableObject {
     }
     func retry(_ item: OutgoingMessage, group: ChatGroup) async {
         guard item.userID == userID else { return }
-        if states[group.id]?.settings?.agentPaused != true { typingHints[group.id] = PalTypingHint(clientID: item.clientID) }
         if let index = outgoing.firstIndex(where: { $0.clientID == item.clientID }) { outgoing[index].failed = false }
         persistOutgoing()
         do {
@@ -649,10 +648,12 @@ final class PalStore: ObservableObject {
 
     func isPalTyping(in groupID: UUID, at now: Date = Date()) -> Bool {
         guard states[groupID]?.settings?.agentPaused != true else { return false }
-        return typingHints[groupID]?.isVisible(at: now) == true || states[groupID]?.palActivity?.isThinking(at: now) == true
+        return states[groupID]?.palActivity?.isThinking(at: now) == true
     }
     func typingDeadline(in groupID: UUID) -> Date? {
-        [typingHints[groupID]?.expiresAt, states[groupID]?.palActivity?.expiresAt.flatMap(PalDate.date)].compactMap { $0 }.max()
+        guard states[groupID]?.settings?.agentPaused != true else { return nil }
+        let activity = states[groupID]?.palActivity
+        return activity?.isThinking() == true ? activity?.expiresAt.flatMap(PalDate.date) : nil
     }
 
     var realtimeIdentity: String {

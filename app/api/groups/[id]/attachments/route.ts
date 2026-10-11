@@ -13,14 +13,20 @@ export function POST(request: Request, context: Context) {
   return route(async () => {
     const { id } = await context.params;
     const { user, db } = await member(request, id);
-    const group = checked(await db.from("groups").select("is_direct").eq("id", id).single());
     const { input, file } = await attachmentForm(request);
     const result = await sendAttachment(id, user.id, input, file);
     after(async () => {
       let addressedToPal = /@pal\b/i.test(input.body ?? "") || input.mentions?.some(mention => mention.type === "pal");
-      if (!group?.is_direct && !addressedToPal && input.reply_to_id) addressedToPal = checked(await db.from("messages").select("role")
-        .eq("group_id", id).eq("id", input.reply_to_id).maybeSingle())?.role === "pal";
-      if (!group?.is_direct && !addressedToPal) await sleep(10500);
+      if (!addressedToPal) {
+        try {
+          const [group, reply] = await Promise.all([
+            db.from("groups").select("is_direct").eq("id", id).single().then(checked),
+            input.reply_to_id ? db.from("messages").select("role").eq("group_id", id).eq("id", input.reply_to_id).maybeSingle().then(checked) : null,
+          ]);
+          addressedToPal = group?.is_direct || reply?.role === "pal";
+        } catch { console.error("Pal response routing could not refresh; the saved message remains queued."); }
+      }
+      if (!addressedToPal) await sleep(3500);
       await dispatchJobs();
     });
     return Response.json(result, { status: 201 });

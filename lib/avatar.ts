@@ -8,6 +8,7 @@ const maxPixels = 25_000_000;
 const maxDimension = 8192;
 const signedTTL = 3600;
 const signedCache = new Map<string, { url: string; refreshAt: number }>();
+const signing = new Map<string, Promise<string>>();
 const photoPath = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/;
 
 export function ownsAvatarPath(owner: string, path: string) {
@@ -76,10 +77,14 @@ export async function signedAvatar<T extends Profile>(profile: T, required = fal
     if (!ownsAvatarPath(profile.user_id, avatar_path)) throw new Error("Stored avatar ownership is invalid.");
     const cached = signedCache.get(avatar_path);
     if (cached && cached.refreshAt > Date.now()) return { ...safe, avatar_url: cached.url };
-    const url = await sign(avatar_path);
-    if (signedCache.size >= 1000) signedCache.delete(signedCache.keys().next().value!);
-    signedCache.set(avatar_path, { url, refreshAt: Date.now() + (signedTTL - 600) * 1000 });
-    return { ...safe, avatar_url: url };
+    const pending = signing.get(avatar_path) ?? sign(avatar_path);
+    signing.set(avatar_path, pending);
+    try {
+      const url = await pending;
+      if (signedCache.size >= 1000) signedCache.delete(signedCache.keys().next().value!);
+      signedCache.set(avatar_path, { url, refreshAt: Date.now() + (signedTTL - 600) * 1000 });
+      return { ...safe, avatar_url: url };
+    } finally { if (signing.get(avatar_path) === pending) signing.delete(avatar_path); }
   } catch (error) {
     console.error("Profile photo is temporarily unavailable.");
     if (required) throw error;
