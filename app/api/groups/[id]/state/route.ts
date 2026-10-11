@@ -26,11 +26,14 @@ export function POST(request: Request, context: Context) {
     const { id } = await context.params;
     const { db } = await member(request, id);
     const { action, data } = actionInput.parse(await request.json());
+    const isDirect = action === "message.reply" && checked(await db.from("groups").select("is_direct").eq("id", id).single())?.is_direct;
     const result = checked(await db.rpc("pal_action", { p_group_id: id, p_action: action, p_data: data }));
-    if (action === "message.reply") after(async () => {
-      if (!/@pal\b/i.test((data as { body: string }).body)) await sleep(10500);
-      await dispatchJobs();
-    });
+    if (action === "message.reply") {
+      after(async () => {
+        if (!isDirect && !/@pal\b/i.test((data as { body: string }).body)) await sleep(10500);
+        await dispatchJobs();
+      });
+    }
     return Response.json(result);
   });
 }

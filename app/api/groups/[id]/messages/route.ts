@@ -27,12 +27,13 @@ export function POST(request: Request, context: Context) {
   return route(async () => {
     const { id } = await context.params;
     const { db } = await member(request, id);
+    const group = checked(await db.from("groups").select("is_direct").eq("id", id).single());
     const { body, client_id, reply_to_id } = messageInput.parse(await request.json());
     const message = checked(await db.rpc("send_message", { p_group_id: id, p_body: body, p_client_id: client_id,
       ...(reply_to_id ? { p_reply_to_id: reply_to_id } : {}),
     }));
     after(async () => {
-      if (!/@pal\b/i.test(body)) await sleep(10500);
+      if (!group?.is_direct && !/@pal\b/i.test(body)) await sleep(10500);
       await dispatchJobs();
     });
     return Response.json({ message }, { status: 201 });

@@ -6,7 +6,9 @@ import { createGroupWithPhoto, groupCreationForm, groupCreationInput, signedGrou
 export function GET(request: Request) {
   return route(async () => {
     const { db, user } = await authenticated(request);
-    const groups = checked(await db.from("groups").select("id,name,invite_code,creator_id,avatar_path").order("created_at"));
+    checked(await db.rpc("ensure_pal_direct"));
+    const groups = checked(await db.from("groups").select("id,name,invite_code,creator_id,avatar_path,is_direct")
+      .order("is_direct", { ascending: false }).order("created_at"));
     if (!groups?.length) return Response.json({ groups: [] });
     const memberships = checked(await db.from("group_members").select("group_id,last_read_at")
       .eq("user_id", user.id).in("group_id", groups.map(group => group.id)));
@@ -23,7 +25,8 @@ export function GET(request: Request) {
           .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle(), unreadQuery,
       ]);
       checked(latest); checked(unread);
-      return { ...await signedGroupAvatar(group), last_read_at: lastReadAt, last_message: latest.data, unread_count: unread.count ?? 0 };
+      return { ...await signedGroupAvatar(group), invite_code: group.is_direct ? null : group.invite_code,
+        last_read_at: lastReadAt, last_message: latest.data, unread_count: unread.count ?? 0 };
     }));
     return Response.json({ groups: summaries });
   });

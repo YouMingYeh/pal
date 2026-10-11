@@ -36,9 +36,10 @@ export async function dispatchJobs() {
         }
         const state = checked(await db.rpc("pal_group_state", { p_group_id: job.group_id }));
         const timezone = state?.settings?.timezone || "UTC";
+        const isDirect = state?.settings?.is_direct === true;
         const created = await client.sessions.create({
-          message: JSON.stringify({ kind: job.job_kind ?? "chat", explicitMention: job.explicit_mention ?? false, messages: batch }),
-          clientContext: { currentTime: new Date().toISOString(), timezone, unavailableUrls },
+          message: JSON.stringify({ kind: job.job_kind ?? "chat", isDirect, explicitMention: job.explicit_mention ?? false, messages: batch }),
+          clientContext: { currentTime: new Date().toISOString(), timezone, unavailableUrls, isDirect },
           outputSchema: agentReply,
         });
         sessionId = created.response.sessionId;
