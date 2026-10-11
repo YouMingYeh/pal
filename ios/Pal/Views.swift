@@ -25,12 +25,7 @@ struct LoginView: View {
             Spacer()
             Image(systemName: "bubble.left.and.bubble.right.fill")
                 .font(.system(size: 54)).foregroundStyle(.blue).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Pal").font(.largeTitle.bold())
-                Text("More time\ntogether.").font(.largeTitle.weight(.semibold))
-                Text("Your group chat, with a little help.\nLet Pal handle the plans.")
-                    .font(.body).foregroundStyle(.secondary)
-            }
+            Text("Pal").font(.largeTitle.bold())
             Spacer()
             SignInWithAppleButton(.signIn) { request in
                 isBusy = true
@@ -89,8 +84,8 @@ private struct GroupsView: View {
         NavigationStack {
             List {
                 if store.groups.isEmpty {
-                    ContentUnavailableView("Your people, in one place", systemImage: "bubble.left.and.bubble.right",
-                                           description: Text("Start a group or join with an invite code."))
+                    ContentUnavailableView("No chats", systemImage: "bubble.left.and.bubble.right",
+                                           description: Text("Create a group or join with an invite code."))
                         .listRowSeparator(.hidden)
                 }
                 ForEach(store.groups) { group in
@@ -98,10 +93,7 @@ private struct GroupsView: View {
                         HStack(spacing: 14) {
                             Image(systemName: "person.2.fill").font(.title3).foregroundStyle(.blue)
                                 .frame(width: 48, height: 48).background(Color.blue.opacity(0.1), in: Circle())
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(group.name).font(.headline)
-                                Text("With Pal").font(.subheadline).foregroundStyle(.secondary)
-                            }
+                            Text(group.name).font(.headline)
                         }.padding(.vertical, 4)
                     }
                 }
@@ -181,7 +173,7 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(spacing: 8) {
                     if messages.isEmpty {
-                        Text("Say hello. Mention @Pal when you need a hand.")
+                        Text("Mention @Pal to ask a question or set a reminder.")
                             .font(.subheadline).foregroundStyle(.secondary).padding(.top, 28)
                     }
                     ForEach(messages) { message in messageBubble(message).id(message.id) }
@@ -223,10 +215,7 @@ struct ChatView: View {
                         Image(systemName: "person.2.fill").font(.caption)
                             .foregroundStyle(.white).frame(width: 30, height: 30)
                             .background(Color.gray, in: Circle())
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(group.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
-                            Text("With Pal").font(.caption2).foregroundStyle(.secondary)
-                        }
+                        Text(group.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
                         Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
                     }
                 }.buttonStyle(.plain).accessibilityLabel("\(group.name), group details")
@@ -235,7 +224,7 @@ struct ChatView: View {
         .sheet(isPresented: $showingDetails) {
             NavigationStack {
                 List {
-                    Section("Invite a friend") {
+                    Section("Invite code") {
                         Text(group.inviteCode).font(.title3.monospaced()).textSelection(.enabled)
                         ShareLink(item: group.inviteCode) { Label("Share invite code", systemImage: "square.and.arrow.up") }
                     }
