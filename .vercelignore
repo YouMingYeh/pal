@@ -1,0 +1,6 @@
+ios/
+supabase/
+.serena/
+.env*
+tests/
+*.md

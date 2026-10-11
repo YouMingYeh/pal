@@ -1,0 +1,5 @@
+// Public client configuration. Server keys belong only in the backend environment.
+SUPABASE_URL = https:/$()/glfwbiwanenrfwyljqiq.supabase.co
+SUPABASE_PUBLISHABLE_KEY = sb_publishable_RjNU5j4-5G3W-uO1WCSJyg_vdny-6Sd
+PAL_API_URL = https:/$()/pal-jade.vercel.app
+#include? "Config.local.xcconfig"
