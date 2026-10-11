@@ -77,15 +77,15 @@ final class PalTests: XCTestCase {
     }
 
     func testLegacyCardHasReadablePlainTextInsteadOfAnEmptyBubble() throws {
-        let planID = UUID(), groupID = UUID()
-        let json: [String: Any] = ["id": UUID().uuidString, "group_id": groupID.uuidString, "role": "pal", "body": "Dinner", "created_at": "2026-10-11T20:00:00Z", "cards": [["type": "plan", "entity_id": planID.uuidString]]]
+        let reminderID = UUID(), groupID = UUID()
+        let json: [String: Any] = ["id": UUID().uuidString, "group_id": groupID.uuidString, "role": "pal", "body": "Reminder: Bring water", "created_at": "2026-10-11T20:00:00Z", "cards": [["type": "reminder", "entity_id": reminderID.uuidString]]]
         let message = try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: json))
         var state = GroupState.empty
-        state.plans = [GroupPlan(id: planID, title: "Dinner", startsAt: "2026-10-12T02:00:00Z", status: "confirmed", attendees: [])]
+        state.reminders = [GroupReminder(id: reminderID, body: "Bring water", dueAt: "2026-10-12T02:00:00Z", timezone: "America/Los_Angeles", status: "cancelled")]
         XCTAssertNil(message.displayedBody(in: state))
         let text = try XCTUnwrap(message.plainBody(in: state))
-        XCTAssertTrue(text.contains("Dinner"))
-        XCTAssertTrue(text.contains("Confirmed"))
+        XCTAssertTrue(text.contains("Bring water"))
+        XCTAssertTrue(text.contains("Cancelled"))
         XCTAssertFalse(text.contains("entity_id"))
     }
 
@@ -565,6 +565,42 @@ final class PalTests: XCTestCase {
         try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store).preferredColorScheme(.dark), name: "Live v1 profile dark", wait: 6)
         if let plan = state.plans.first(where: { $0.status != "cancelled" }) { try await attachScreenshot(of: NavigationStack { PlanDetailView(group: group, plan: plan) }.environmentObject(store), name: "Live v1 plan details") }
 
+    }
+
+    @MainActor
+    func testExistingAccountScreenReview() async throws {
+        guard ProcessInfo.processInfo.environment["PAL_TEST_EXISTING_ACCOUNT"] == "1" else { throw XCTSkip("Read-only screen review is explicitly enabled on the developer’s signed-in device.") }
+        let store = PalStore()
+        guard store.isSignedIn else { throw XCTSkip("The device must already be signed in; this review never changes its account.") }
+        try await store.loadProfile(); try await store.loadGroups()
+        let group = try XCTUnwrap(store.groups.first { !$0.isDirect && $0.name == "Friday dinner" })
+        _ = try await store.messages(in: group); try await store.loadState(group)
+        let plan = try XCTUnwrap(store.states[group.id]?.plans.first)
+        try await attachScreenshot(of: GroupsView().environmentObject(store).environment(\.scenePhase, .active), name: "Chat list review", wait: 2)
+        let navigation = Task { @MainActor in
+            for room in store.groups.filter({ !$0.isDirect }).prefix(3) {
+                store.path = [room.id]
+                try await Task.sleep(for: .milliseconds(800))
+                store.path = []
+                try await Task.sleep(for: .milliseconds(400))
+            }
+        }
+        try await attachScreenshot(of: GroupsView().environmentObject(store).environment(\.scenePhase, .active), name: "Repeated group navigation review", wait: 4)
+        try await navigation.value
+        try await attachScreenshot(of: NavigationStack { ChatView(group: group) }.environmentObject(store).environment(\.scenePhase, .active), name: "Conversation review", wait: 2)
+        try await attachScreenshot(of: NavigationStack { ChatView(group: group) }.environmentObject(store).environment(\.scenePhase, .active).preferredColorScheme(.light), name: "Light conversation review", wait: 2)
+        if let member = store.states[group.id]?.members.first(where: { $0.userID != store.userID }) {
+            try await attachScreenshot(of: NavigationStack { MemberDetailView(groupID: group.id, member: member) }.environmentObject(store), name: "Member summary review", wait: 8)
+        }
+        if let direct = store.groups.first(where: \.isDirect) {
+            _ = try await store.messages(in: direct); try await store.loadState(direct)
+            try await attachScreenshot(of: NavigationStack { ChatView(group: direct) }.environmentObject(store).environment(\.scenePhase, .active), name: "Pal principal review", wait: 2)
+        }
+        try await attachScreenshot(of: NavigationStack { PlanDetailView(group: group, plan: plan) }.environmentObject(store), name: "Plan review", wait: 2)
+        try await attachScreenshot(of: NavigationStack { GroupCalendarView(group: group) }.environmentObject(store), name: "Calendar review", wait: 2)
+        try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store), name: "Profile review", wait: 2)
+        try await attachScreenshot(of: RSVPButtons(selected: "going", busy: false, action: { _ in }).padding(20).frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(uiColor: .systemBackground)), name: "RSVP controls review", wait: 0.3)
+        try await attachScreenshot(of: RSVPButtons(selected: "maybe", busy: false, action: { _ in }).padding(20).frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(uiColor: .systemBackground)).environment(\.dynamicTypeSize, .accessibility3), name: "Accessible RSVP controls review", wait: 0.3)
     }
 
     @MainActor

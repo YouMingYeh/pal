@@ -27,6 +27,11 @@ struct ChatAttachment: Codable, Identifiable {
         case id, kind, url, width, height
         case mimeType = "mime_type", byteSize = "byte_size", durationMS = "duration_ms"
     }
+    var displaySize: CGSize {
+        guard let width, let height, width > 0, height > 0 else { return CGSize(width: 160, height: 120) }
+        let scale = min(240 / CGFloat(width), 280 / CGFloat(height))
+        return CGSize(width: CGFloat(width) * scale, height: CGFloat(height) * scale)
+    }
 }
 
 enum AttachmentFiles {

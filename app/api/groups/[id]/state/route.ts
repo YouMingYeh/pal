@@ -30,7 +30,11 @@ export function POST(request: Request, context: Context) {
     const result = checked(await db.rpc("pal_action", { p_group_id: id, p_action: action, p_data: data }));
     if (action === "message.reply") {
       after(async () => {
-        if (!isDirect && !/@pal\b/i.test((data as { body: string }).body)) await sleep(10500);
+        const message = data as { body: string; reply_to_id: string; mentions?: { type: string }[] };
+        let addressedToPal = /@pal\b/i.test(message.body) || message.mentions?.some(mention => mention.type === "pal");
+        if (!isDirect && !addressedToPal) addressedToPal = checked(await db.from("messages").select("role")
+          .eq("group_id", id).eq("id", message.reply_to_id).maybeSingle())?.role === "pal";
+        if (!isDirect && !addressedToPal) await sleep(10500);
         await dispatchJobs();
       });
     }

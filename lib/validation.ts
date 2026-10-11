@@ -2,9 +2,15 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 export const id = z.string().uuid();
+export const userMention = z.object({ type: z.literal("user"), user_id: id }).strict();
+export const messageMentions = z.array(z.discriminatedUnion("type", [userMention, z.object({ type: z.literal("pal") }).strict()])).max(8)
+  .refine(value => new Set(value.map(mention => mention.type === "pal" ? "pal" : mention.user_id.toLowerCase())).size === value.length, "Mention each person once.");
+export const palMentions = z.array(userMention).max(8)
+  .refine(value => new Set(value.map(mention => mention.user_id.toLowerCase())).size === value.length, "Mention each person once.");
+export type MessageMention = z.infer<typeof messageMentions>[number];
 export const groupInput = z.object({ name: z.string().trim().min(1).max(80) }).strict();
 export const joinInput = z.object({ invite_code: id }).strict();
-export const messageInput = z.object({ body: z.string().trim().min(1).max(4000), client_id: id, reply_to_id: id.optional() }).strict();
+export const messageInput = z.object({ body: z.string().trim().min(1).max(4000), client_id: id, reply_to_id: id.optional(), mentions: messageMentions.optional() }).strict();
 
 export const httpUrl = z.string().max(2000).url().refine(value => {
   const url = new URL(value);
@@ -53,9 +59,10 @@ export const actionSchemas = {
   "source.update": z.object({ id, ...z.object(sourceFields).partial().shape, ...sourceKey }).strict(),
   "poll.create": z.object({
     kind: z.enum(["place", "time"]), question: z.string().trim().min(1).max(300),
-    options: z.array(pollOption).min(2).max(8), deadline_at: timestamp, ...sourceKey,
+    options: z.array(pollOption).min(2).max(8), deadline_at: timestamp, presentation: z.enum(["options", "availability"]).optional(), ...sourceKey,
   }).strict().refine(value => new Set(value.options.map(option => option.id)).size === value.options.length, "Poll option IDs must be unique.")
-    .refine(value => value.kind !== "time" || value.options.every(option => Boolean(option.starts_at)), "Time options need dated start times."),
+    .refine(value => value.kind !== "time" || value.options.every(option => Boolean(option.starts_at)), "Time options need dated start times.")
+    .refine(value => !value.presentation || value.presentation === (value.kind === "time" ? "availability" : "options"), "Card presentation must match its saved choices."),
   "poll.vote": z.object({ id, option_ids: z.array(z.string().min(1).max(64)).max(8), ...sourceKey }).strict(),
   "plan.create": z.object({ ...planFields, ...sourceKey }).strict().refine(value => !value.ends_at || Date.parse(value.ends_at) > Date.parse(value.starts_at), "Plan must end after it starts."),
   "plan.update": z.object({ id, ...z.object(planFields).partial().shape, ...sourceKey }).strict().refine(value => !value.starts_at || !value.ends_at || Date.parse(value.ends_at) > Date.parse(value.starts_at), "Plan must end after it starts."),
@@ -87,14 +94,31 @@ export const profileInput = z.object({
 export const deviceInput = z.object({ token: z.string().regex(/^[a-fA-F0-9]{64,200}$/).refine(value => value.length % 2 === 0, "Token must encode complete bytes."), environment: z.enum(["sandbox", "production"]) }).strict();
 export const palEmotions = ["fier", "heureux", "hilare", "curieux", "confus", "surpris", "timide", "triste", "colere", "somnolent", "attentif", "neutre"] as const;
 export const palEmotion = z.enum(palEmotions);
-export const agentReply = z.object({
-  reply: z.string().max(4000).describe("The short chat reply. Return an empty string to stay silent after observations or tool/card actions."),
-  emotion: palEmotion.catch("fier").optional().describe("The mascot expression matching this reply's actual tone; use fier when no more specific emotion fits."),
+const palOutput = z.object({
+  body: z.string().trim().min(1).max(4000),
+  emotion: palEmotion.catch("fier").optional(), reply_to_id: id.nullable().optional(),
+  mentions: palMentions.optional(),
+  card: z.object({ type: z.enum(["plan", "options", "availability", "rsvp", "choice"]), entity_id: id }).strict().nullable().optional()
+    .describe("An existing same-group entity: plan for a future draft/confirmed plan; options for saved place/activity choices; availability for saved dated time choices. RSVP requires a future confirmed plan; choice is a legacy options alias. Never invent an entity or embed UI."),
 }).strict();
+export const agentReply = z.object({
+  reply: z.string().max(4000).describe("One natural chat reply. Use an empty string for genuine silence, or when messages supplies intentional separate replies."),
+  emotion: palEmotion.catch("fier").optional().describe("The mascot expression matching this reply's actual tone; use fier when no more specific emotion fits."),
+  messages: z.array(palOutput).max(3).optional().describe("Optional deliberate separate chat messages. Normally reply once. Keep paragraph breaks in one body; never split mechanically. Tag only verified members; reply only to verified same-group human/Pal messages."),
+}).strict().superRefine((value, context) => {
+  if (value.reply.trim() && value.messages?.length) context.addIssue({ code: "custom", message: "Choose a single reply or separate messages, never both." });
+  if ((value.messages ?? []).reduce((sum, message) => sum + message.body.length, 0) > 4000) context.addIssue({ code: "custom", message: "Keep the entire reply within 4000 characters." });
+});
 
 export function parsedPalReply(value: unknown) {
   const reply = agentReply.parse(value);
   return { body: reply.reply.trim(), emotion: reply.emotion ?? "fier" };
+}
+export function parsedPalOutputs(value: unknown) {
+  const reply = agentReply.parse(value);
+  const messages = reply.messages?.length ? reply.messages : reply.reply.trim() ? [{ body: reply.reply.trim() }] : [];
+  return messages.map(message => ({ body: message.body, emotion: message.emotion ?? reply.emotion ?? "fier",
+    reply_to_id: message.reply_to_id ?? null, mentions: message.mentions ?? [], card: message.card ?? null }));
 }
 
 export function sharedUrls(body: string) {

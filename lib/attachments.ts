@@ -5,12 +5,12 @@ import { admin, checked } from "./db";
 import { HttpError } from "./http";
 import { normalizeAvatar } from "./avatar";
 import { inspectAudio } from "./audio";
-import { id } from "./validation";
+import { id, messageMentions } from "./validation";
 
 export const ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024;
 export const attachmentInput = z.object({
   kind: z.enum(["image", "audio"]), client_id: id,
-  body: z.string().trim().max(4000).optional(), reply_to_id: id.optional(),
+  body: z.string().trim().max(4000).optional(), reply_to_id: id.optional(), mentions: messageMentions.optional(),
 }).strict();
 type Input = z.infer<typeof attachmentInput>;
 type Attachment = { id: string; group_id: string; message_id: string; uploader_id: string; client_id: string; object_path: string; input_sha256: string; kind: "image" | "audio"; mime_type: string; byte_size: number; width: number | null; height: number | null; duration_ms: number | null };
@@ -36,12 +36,17 @@ export async function attachmentForm(request: Request) {
   let form: FormData;
   try { form = await new Request(request.url, { method: "POST", headers: { "Content-Type": contentType }, body: Buffer.concat(chunks) }).formData(); }
   catch { throw new HttpError(400, "Send a valid photo or voice recording."); }
-  const fields = ["file", "kind", "client_id", "body", "reply_to_id"];
+  const fields = ["file", "kind", "client_id", "body", "reply_to_id", "mentions"];
   if ([...form.keys()].some(key => !fields.includes(key)) || fields.some(key => form.getAll(key).length > 1)) throw new HttpError(400, "Send one file with a message ID.");
   const file = form.get("file");
   if (!(file instanceof File) || !file.size) throw new HttpError(400, "Choose a photo or voice recording.");
   if (file.size > ATTACHMENT_MAX_BYTES) throw new HttpError(413, "Choose a file smaller than 4 MB.");
-  const input = attachmentInput.parse(Object.fromEntries([...form.entries()].filter(([key]) => key !== "file")));
+  const raw = Object.fromEntries([...form.entries()].filter(([key]) => key !== "file"));
+  if (raw.mentions !== undefined) {
+    if (typeof raw.mentions !== "string" || raw.mentions.length > 2048) throw new HttpError(400, "Choose valid chat members to mention.");
+    try { raw.mentions = JSON.parse(raw.mentions); } catch { throw new HttpError(400, "Choose valid chat members to mention."); }
+  }
+  const input = attachmentInput.parse(raw);
   return { input, file };
 }
 
@@ -94,13 +99,14 @@ export async function sendAttachment(group: string, owner: string, input: Input,
     p_kind: input.kind, p_mime_type: media.mime_type, p_byte_size: media.bytes.length,
     p_width: media.width, p_height: media.height, p_duration_ms: media.duration_ms,
     p_sha256: media.hash, p_body: input.body || null, p_reply_to_id: input.reply_to_id ?? null,
+    p_mentions: input.mentions ?? [],
   };
   try {
-    result = checked(await db.rpc("send_attachment", args));
+    result = checked(await db.rpc("send_attachment_with_mentions", args));
   } catch (error) {
     // A second identical call waits on the same SQL group lock, so a lost response
     // cannot cause cleanup to race a still-committing message transaction.
-    const retry = await db.rpc("send_attachment", args);
+    const retry = await db.rpc("send_attachment_with_mentions", args);
     if (!retry.error && retry.data) result = retry.data;
     else {
       if (!existing && retry.error?.code === "22023") await removeUnused(group, owner, path);

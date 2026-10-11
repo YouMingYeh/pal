@@ -12,6 +12,10 @@ settings:
 configFiles:
   Debug: Config.xcconfig
   Release: Config.xcconfig
+packages:
+  Kingfisher:
+    url: https://github.com/onevcat/Kingfisher.git
+    exactVersion: 8.13.0
 targets:
   Pal:
     type: application
@@ -62,6 +66,7 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     dependencies:
+      - package: Kingfisher
       - target: PalShare
         embed: true
   PalShare:
@@ -73,6 +78,8 @@ targets:
       - path: Pal/PalStore.swift
       - path: Pal/PalModels.swift
       - path: Shared
+    dependencies:
+      - package: Kingfisher
     entitlements:
       path: Share/Share.entitlements
       properties:

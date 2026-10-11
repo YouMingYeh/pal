@@ -262,7 +262,7 @@ struct MascotWebPlayer: UIViewRepresentable {
     private func configure() {
         guard let owner, let webView, owner.expression != expression else { return }
         expression = owner.expression
-        let values: [String: Any] = ["state": "idle", "expression": owner.expression, "ink": "#ff7a1a", "paper": "#fffff5", "active": true, "reducedMotion": false]
+        let values: [String: Any] = ["state": "idle", "expression": owner.expression, "ink": PalTheme.mascotInkHex, "paper": PalTheme.mascotPaperHex, "active": true, "reducedMotion": false]
         guard let data = try? JSONSerialization.data(withJSONObject: values), let json = String(data: data, encoding: .utf8) else {
             fail(); return
         }

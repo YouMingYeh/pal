@@ -70,6 +70,19 @@ struct MessageCard: Codable, Hashable, Identifiable {
     var id: String { type + entityID.uuidString }
     enum CodingKeys: String, CodingKey { case type; case entityID = "entity_id", sourceID = "source_id" }
 }
+struct MessageMention: Codable, Hashable {
+    var type: String
+    var userID: UUID? = nil
+    enum CodingKeys: String, CodingKey { case type; case userID = "user_id" }
+}
+struct MessageReply: Decodable {
+    var id: UUID
+    var senderID: UUID?
+    var role: String
+    var body: String
+    enum CodingKeys: String, CodingKey { case id, role, body; case senderID = "sender_id" }
+}
+
 struct ChatMessage: Decodable, Identifiable {
     let id: UUID
     let groupID: UUID
@@ -82,9 +95,11 @@ struct ChatMessage: Decodable, Identifiable {
     let cards: [MessageCard]
     let attachments: [ChatAttachment]
     let emotion: String?
+    let mentions: [MessageMention]
+    let reply: MessageReply?
     var timelineID: UUID { clientID ?? id }
     enum CodingKeys: String, CodingKey {
-        case id, role, body, cards, attachments, emotion
+        case id, role, body, cards, attachments, emotion, mentions, reply
         case groupID = "group_id", senderID = "sender_id", createdAt = "created_at", replyToID = "reply_to_id", clientID = "client_id"
     }
     init(from decoder: Decoder) throws {
@@ -100,6 +115,8 @@ struct ChatMessage: Decodable, Identifiable {
         cards = try c.decodeIfPresent([MessageCard].self, forKey: .cards) ?? []
         attachments = try c.decodeIfPresent([ChatAttachment].self, forKey: .attachments) ?? []
         emotion = try c.decodeIfPresent(String.self, forKey: .emotion)
+        mentions = try c.decodeIfPresent([MessageMention].self, forKey: .mentions) ?? []
+        reply = try c.decodeIfPresent(MessageReply.self, forKey: .reply)
     }
     /// Keep sender labels and delivery times on the edges of a short message run.
     func follows(_ previous: ChatMessage, calendar: Calendar = .current) -> Bool {
@@ -108,22 +125,18 @@ struct ChatMessage: Decodable, Identifiable {
         let interval = currentDate.timeIntervalSince(previousDate)
         return calendar.isDate(currentDate, inSameDayAs: previousDate) && (0...180).contains(interval)
     }
-    /// Legacy card messages stay readable while the chat itself remains plain text.
+    /// Rich cards render their persisted records; older card types retain a text fallback.
     func plainBody(in state: GroupState) -> String? {
         var sections: [String] = []
         if let text = displayedBody(in: state), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { sections.append(text) }
         for card in cards {
             var text: String?
             switch card.type {
-            case "plan":
-                if let plan = state.plans.first(where: { $0.id == card.entityID }) {
-                    text = [plan.title, plan.startsAt.flatMap(PalDate.date)?.formatted(date: .abbreviated, time: .shortened), plan.status.capitalized].compactMap { $0 }.joined(separator: " · ")
-                }
+            case "plan", "rsvp", "options", "choice", "availability": continue
             case "reminder":
                 if let reminder = state.reminders.first(where: { $0.id == card.entityID }) {
                     text = [reminder.body, PalDate.date(reminder.dueAt)?.formatted(date: .abbreviated, time: .shortened), reminder.status == "cancelled" ? "Cancelled" : nil].compactMap { $0 }.joined(separator: " · ")
                 }
-            case "choice", "availability": text = state.polls.first { $0.id == card.entityID }?.question
             case "place":
                 if let place = state.places.first(where: { $0.id == card.entityID }) { text = [place.name, place.address].compactMap { $0 }.joined(separator: "\n") }
                 else if let source = state.sources.first(where: { $0.id == card.entityID || $0.id == card.sourceID }) {
@@ -146,11 +159,11 @@ struct ChatMessage: Decodable, Identifiable {
         for card in cards {
             var title: String?
             switch card.type {
-            case "plan": title = state.plans.first { $0.id == card.entityID }?.title
+            case "plan", "rsvp": title = state.plans.first { $0.id == card.entityID }?.title
             case "reminder":
                 title = state.reminders.first { $0.id == card.entityID }?.body
                 if let title, value == "Reminder: " + title { return nil }
-            case "choice", "availability": title = state.polls.first { $0.id == card.entityID }?.question
+            case "options", "choice", "availability": title = state.polls.first { $0.id == card.entityID }?.question
             case "place":
                 title = state.places.first { $0.id == card.entityID }?.name
                 if let source = state.sources.first(where: { $0.id == card.entityID || $0.id == card.sourceID }) {
@@ -166,8 +179,17 @@ struct ChatMessage: Decodable, Identifiable {
 }
 
 enum PalText {
-    static func linked(_ body: String, markdown: Bool = false) -> AttributedString {
+    static func linked(_ body: String, markdown: Bool = false, mentions: [MessageMention] = [], members: [GroupMember] = []) -> AttributedString {
         var result = markdown ? ((try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(body)) : AttributedString(body)
+        let names = mentions.compactMap { mention in mention.type == "pal" ? "Pal" : members.first { $0.userID == mention.userID }?.displayName }
+        for name in names {
+            let pattern = "@" + NSRegularExpression.escapedPattern(for: name) + "(?=$|[\\s.,!?，。！？])"
+            let visible = String(result.characters)
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            for match in regex.matches(in: visible, range: NSRange(visible.startIndex..., in: visible)) {
+                if let textRange = Range(match.range, in: visible), let range = Range(textRange, in: result) { result[range].inlinePresentationIntent = .stronglyEmphasized }
+            }
+        }
         let visible = String(result.characters)
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return result }
         for match in detector.matches(in: visible, range: NSRange(visible.startIndex..., in: visible)) {
@@ -179,6 +201,28 @@ enum PalText {
         return result
     }
 }
+enum PalMentions {
+    private static let expression = try! NSRegularExpression(pattern: "(?:^|\\s)@([^@\\n]*)$")
+    private static func range(in text: String) -> Range<String.Index>? {
+        expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)).flatMap { Range($0.range(at: 1), in: text) }
+    }
+    static func query(in text: String) -> String? {
+        guard let range = range(in: text) else { return nil }
+        let query = String(text[range])
+        return query.hasSuffix(" ") ? nil : query
+    }
+    static func inserting(name: String, into text: String) -> String {
+        guard let range = range(in: text) else { return text }
+        return text.replacingCharacters(in: range, with: name + " ")
+    }
+    static func retained(_ selected: [MessageMention: String], in text: String) -> [MessageMention] {
+        selected.filter { _, name in
+            let pattern = "@" + NSRegularExpression.escapedPattern(for: name) + "(?=$|[\\s.,!?，。！？])"
+            return text.range(of: pattern, options: .regularExpression) != nil
+        }.map(\.key).sorted { ($0.userID?.uuidString ?? "pal") < ($1.userID?.uuidString ?? "pal") }
+    }
+}
+
 struct GroupMember: Decodable, Identifiable {
     var userID: UUID
     var displayName: String?
@@ -291,6 +335,14 @@ struct GroupPoll: Decodable, Identifiable {
         guard kind == "time", let userID else { return false }
         return responses?.contains { $0.userID == userID && $0.optionIDs.isEmpty } == true
     }
+    func availability(for userID: UUID) -> String? {
+        guard kind == "time" else { return nil }
+        let response = responses?.first { $0.userID == userID }
+        let selections = response?.optionIDs ?? votes.filter { $0.userID == userID }.map(\.optionID)
+        if response != nil && selections.isEmpty { return "None of these times" }
+        let labels = options.filter { selections.contains($0.id) }.map(\.label)
+        return labels.isEmpty ? nil : labels.joined(separator: " · ")
+    }
     enum CodingKeys: String, CodingKey { case id,kind,question,options,status,votes,responses; case deadlineAt = "deadline_at" }
 }
 struct PlanAttendee: Decodable {
@@ -310,6 +362,15 @@ struct GroupPlan: Decodable, Identifiable {
     var bookingReference: String?
     var version: Int?
     var attendees: [PlanAttendee]
+    func response(for userID: UUID?) -> String? { attendees.first { $0.userID == userID }?.status }
+    func canRSVP(now: Date = Date()) -> Bool { status == "confirmed" && startsAt.flatMap(PalDate.date).map { $0 > now } == true }
+    func attendanceSummary(memberCount: Int) -> String {
+        let going = attendees.filter { $0.status == "going" }.count
+        let maybe = attendees.filter { $0.status == "maybe" }.count
+        let declined = attendees.filter { $0.status == "declined" }.count
+        let unanswered = max(0, memberCount - Set(attendees.map(\.userID)).count)
+        return "\(going) going" + (maybe > 0 ? " · \(maybe) maybe" : "") + (declined > 0 ? " · \(declined) not going" : "") + (unanswered > 0 ? " · \(unanswered) awaiting reply" : "")
+    }
     enum CodingKeys: String, CodingKey { case id,title,status,notes,attendees,version; case startsAt = "starts_at", endsAt = "ends_at", placeID = "place_id", bookingStatus = "booking_status", bookingReference = "booking_reference" }
 }
 struct GroupMemory: Decodable, Identifiable {
@@ -320,6 +381,9 @@ struct GroupMemory: Decodable, Identifiable {
     var value: String
     var body: String?
     var expiresAt: String?
+    func isCurrentAvailability(for memberID: UUID, now: Date = Date()) -> Bool {
+        kind == "availability" && userID == memberID && expiresAt.flatMap(PalDate.date).map { $0 > now } == true
+    }
     enum CodingKeys: String, CodingKey { case id,kind,key,value,body; case userID = "user_id", expiresAt = "expires_at" }
 }
 struct GroupReminder: Decodable, Identifiable {
@@ -413,6 +477,7 @@ struct OutgoingMessage: Codable, Identifiable {
     var failed: Bool
     var attachment: DraftAttachment?
     var createdAt: String? = nil
+    var mentions: [MessageMention]? = nil
     var id: UUID { clientID }
 }
 
@@ -430,4 +495,13 @@ enum PalCancellation {
         let value = error as NSError
         return value.domain == NSURLErrorDomain && value.code == NSURLErrorCancelled
     }
+}
+
+struct MemberSummary: Decodable {
+    struct Source: Decodable, Identifiable { let id: UUID; let body: String }
+    let summary: String?
+    let sources: [Source]
+    let availability: [GroupMemory]
+    let preferences: [GroupMemory]
+    static func key(groupID: UUID, userID: UUID) -> String { groupID.uuidString + "/" + userID.uuidString }
 }

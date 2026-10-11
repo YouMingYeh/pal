@@ -77,10 +77,10 @@ struct GroupCreateView: View {
                         TextField("Group name", text: $name).multilineTextAlignment(.trailing).disabled(started)
                     }
                     if name.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count > 80 {
-                        Text("Use 80 characters or fewer.").font(.footnote).foregroundStyle(.red)
+                        Text("Use 80 characters or fewer.").font(.footnote).foregroundStyle(PalTheme.error)
                     }
                 }
-                if let error { Section { Text(error).font(.footnote).foregroundStyle(.red) } }
+                if let error { Section { Text(error).font(.footnote).foregroundStyle(PalTheme.error) } }
                 if busy { ProgressView("Creating group…").frame(maxWidth: .infinity) }
             }.disabled(busy)
                 .navigationTitle("New group").navigationBarTitleDisplayMode(.inline)
@@ -203,7 +203,7 @@ struct GroupJoinView: View {
                         Button("Join group") { join(invite) }.disabled(PalStore.inviteCode(from: invite) == nil)
                     }
                 }.disabled(busy)
-                if let error { Section { Text(error).font(.footnote).foregroundStyle(.red) } }
+                if let error { Section { Text(error).font(.footnote).foregroundStyle(PalTheme.error) } }
             }.navigationTitle("Join group").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) } }
                 .task { await checkCamera() }
@@ -255,7 +255,7 @@ struct GroupInviteQRView: View {
                 Text(group.name).font(.title2.weight(.semibold)).multilineTextAlignment(.center)
                 if let image = PalGroupAccess.qrImage(for: url) {
                     Image(uiImage: image).interpolation(.none).resizable().scaledToFit()
-                        .frame(maxWidth: 230, maxHeight: 230).padding(20).background(.white, in: RoundedRectangle(cornerRadius: 24)).accessibilityHidden(true)
+                        .frame(maxWidth: 230, maxHeight: 230).padding(20).background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 24)).accessibilityHidden(true)
                 } else { Text("The QR code is unavailable. Share the invite link below.").foregroundStyle(.secondary) }
                 Text("Ask a friend to scan this code in Pal.").foregroundStyle(.secondary).multilineTextAlignment(.center)
                 ShareLink("Share invite link", item: url).buttonStyle(.borderedProminent)

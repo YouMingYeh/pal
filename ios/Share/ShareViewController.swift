@@ -60,7 +60,7 @@ private struct ShareView: View {
                 }
                 if let error {
                     Section {
-                        Text(error).foregroundStyle(.red)
+                        Text(error).foregroundStyle(PalTheme.error)
                         if !attempted {
                             Button("Try again") { Task { await load() } }
                         }

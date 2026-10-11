@@ -10,13 +10,19 @@ struct GroupMapView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if store.states[group.id] != nil, store.stateFetch[group.id]?.issue != nil {
+                PalFetchStatusView(state: store.stateFetch[group.id] ?? PalFetchState(), hasContent: true) { Task { await refresh() } }
+            }
             if !places.isEmpty {
                 Picker("View", selection: $mode) {
                     Text("Map").tag(0)
                     Text("Saved").tag(1)
                 }.pickerStyle(.segmented).padding()
             }
-            if places.isEmpty {
+            if store.states[group.id] == nil {
+                PalFetchStatusView(state: store.stateFetch[group.id] ?? PalFetchState(), hasContent: false) { Task { await refresh() } }
+                    .frame(maxHeight: .infinity)
+            } else if places.isEmpty {
                 VStack(spacing: 16) {
                     Image("DoodlePlaces").renderingMode(.template).resizable().scaledToFit()
                         .frame(width: 100, height: 100).foregroundStyle(.secondary).accessibilityHidden(true)
@@ -52,8 +58,10 @@ struct GroupMapView: View {
         .navigationTitle("Map").navigationBarTitleDisplayMode(.inline)
         .toolbar { Button("Add place", systemImage: "plus") { searching = true } }
         .sheet(isPresented: $searching) { NavigationStack { PlaceSearchView(group: group) } }
-        .task { do { try await store.loadState(group) } catch { store.report(error) } }
+        .task { await refresh() }
+        .refreshable { await refresh() }
     }
+    private func refresh() async { do { try await store.loadState(group) } catch { /* Keep map data and offer retry. */ } }
 }
 
 struct PlaceSearchView: View {
@@ -81,12 +89,19 @@ struct PlaceSearchView: View {
     @State private var busy = false
     @State private var saving = false
     @State private var searched = false
+    @State private var searchIssue: String?
     @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
         List {
             if busy { ProgressView("Searching…") }
-            if searched && items.isEmpty && !busy { ContentUnavailableView.search(text: query) }
+            if let searchIssue {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(searchIssue).font(.footnote).foregroundStyle(.secondary)
+                    Button("Try again", action: find).disabled(busy)
+                }
+            }
+            if searched && items.isEmpty && !busy && searchIssue == nil { ContentUnavailableView.search(text: query) }
             ForEach(items) { item in
                 Button { save(item) } label: {
                     VStack(alignment: .leading, spacing: 4) {
@@ -115,6 +130,7 @@ struct PlaceSearchView: View {
         components.queryItems = [URLQueryItem(name: "q", value: text)]
         guard let path = components.string else { return }
         busy = true
+        searchIssue = nil
         searchTask = Task {
             defer { if !Task.isCancelled { busy = false } }
             do {
@@ -124,7 +140,7 @@ struct PlaceSearchView: View {
                 items = try JSONDecoder().decode(Response.self, from: data).places
                 searched = true
             } catch is CancellationError {} catch {
-                if !Task.isCancelled { store.report(error) }
+                if !Task.isCancelled && !PalCancellation.isCancellation(error) { searchIssue = error.localizedDescription }
             }
         }
     }
@@ -220,14 +236,27 @@ struct PlaceDetailView: View {
 struct GroupCalendarView: View {
     let group: ChatGroup
     @EnvironmentObject private var store: PalStore
-    @State private var month = Date()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .body) private var dayHeight: CGFloat = 44
+    @State private var anchor = Calendar.current.dateInterval(of: .month, for: Date())?.start ?? Date()
+    @State private var page = 0
+    @State private var monthPages = Array(-12...12)
     @State private var selected = Calendar.current.startOfDay(for: Date())
+    @State private var preferredDay = Calendar.current.component(.day, from: Date())
     private var state: GroupState { store.states[group.id] ?? .empty }
-    private var days: [Date?] {
-        let calendar = Calendar.current
+    private var month: Date { date(for: page) }
+    static func monthDays(for month: Date, calendar: Calendar = .current) -> [Date?] {
         guard let interval = calendar.dateInterval(of: .month, for: month), let range = calendar.range(of: .day, in: .month, for: month) else { return [] }
         let offset = (calendar.component(.weekday, from: interval.start) - calendar.firstWeekday + 7) % 7
-        return Array(repeating: nil, count: offset) + range.compactMap { calendar.date(byAdding: .day, value: $0 - 1, to: interval.start) }
+        let dates: [Date?] = range.compactMap { calendar.date(byAdding: .day, value: $0 - 1, to: interval.start) }
+        let leading: [Date?] = Array(repeating: nil, count: offset)
+        // All pages occupy six weeks, so changing months never jumps the agenda.
+        return leading + dates + Array(repeating: nil, count: max(0, 42 - offset - dates.count))
+    }
+    static func selection(in month: Date, preferredDay: Int, calendar: Calendar = .current) -> Date? {
+        guard let start = calendar.dateInterval(of: .month, for: month)?.start,
+              let days = calendar.range(of: .day, in: .month, for: start) else { return nil }
+        return calendar.date(byAdding: .day, value: min(max(1, preferredDay), days.count) - 1, to: start)
     }
     private var weekdays: [String] {
         let symbols = Calendar.current.veryShortStandaloneWeekdaySymbols
@@ -242,35 +271,36 @@ struct GroupCalendarView: View {
     var body: some View {
         List {
             Section {
-                HStack {
-                    Button("Previous month", systemImage: "chevron.left") { moveMonth(-1) }.labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
-                    Spacer()
-                    Text(month.formatted(.dateTime.month(.wide).year())).font(.headline)
-                    Spacer()
-                    Button("Next month", systemImage: "chevron.right") { moveMonth(1) }.labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
-                }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 8) {
-                    ForEach(weekdays.indices, id: \.self) { index in Text(weekdays[index]).font(.caption).foregroundStyle(.secondary) }
-                    ForEach(days.indices, id: \.self) { index in
-                        if let date = days[index] {
-                            let active = Calendar.current.isDate(date, inSameDayAs: selected)
-                            Button { selected = date } label: {
-                                VStack(spacing: 3) {
-                                    Text("\(Calendar.current.component(.day, from: date))").font(.body)
-                                    Circle().fill(hasEvents(date) ? (active ? PalTheme.onAccent : PalTheme.accentText) : .clear).frame(width: 4, height: 4)
-                                }.frame(maxWidth: .infinity).padding(.vertical, 5)
-                                    .foregroundStyle(active ? PalTheme.onAccent : PalTheme.ink)
-                                    .background(active ? PalTheme.accent : .clear, in: RoundedRectangle(cornerRadius: 10))
-                            }.buttonStyle(.plain).accessibilityLabel(date.formatted(date: .complete, time: .omitted))
-                                .accessibilityAddTraits(active ? .isSelected : [])
-                        } else { Color.clear.frame(height: 38) }
+                VStack(spacing: 12) {
+                    HStack {
+                        Button("Previous month", systemImage: "chevron.left") { moveMonth(-1) }
+                            .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                        Spacer()
+                        Text(month.formatted(.dateTime.month(.wide).year())).font(.headline).accessibilityAddTraits(.isHeader)
+                        Spacer()
+                        Button("Next month", systemImage: "chevron.right") { moveMonth(1) }
+                            .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                     }
-                }
+                    HStack(spacing: 0) {
+                        ForEach(weekdays.indices, id: \.self) { index in
+                            Text(weekdays[index]).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                        }
+                    }.accessibilityHidden(true)
+                    TabView(selection: $page) {
+                        ForEach(monthPages, id: \.self) { index in
+                            monthGrid(for: date(for: index)).tag(index)
+                        }
+                    }.tabViewStyle(.page(indexDisplayMode: .never))
+                        .frame(height: dayHeight * 6 + 40)
+                }.buttonStyle(.plain)
             }
             Section(selected.formatted(date: .abbreviated, time: .omitted)) {
                 let plans = state.plans.filter { $0.status != "cancelled" && onDay($0.startsAt) }
                 let reminders = state.reminders.filter { $0.status != "cancelled" && onDay($0.dueAt) }
-                if plans.isEmpty && reminders.isEmpty {
+                if store.states[group.id] == nil || store.stateFetch[group.id]?.issue != nil {
+                    PalFetchStatusView(state: store.stateFetch[group.id] ?? PalFetchState(), hasContent: store.states[group.id] != nil) { Task { await refresh() } }
+                }
+                if store.states[group.id] != nil && plans.isEmpty && reminders.isEmpty {
                     VStack(spacing: 10) {
                         Image("DoodleCalendar").renderingMode(.template).resizable().scaledToFit()
                             .frame(width: 64, height: 64).foregroundStyle(.secondary).accessibilityHidden(true)
@@ -293,7 +323,35 @@ struct GroupCalendarView: View {
                 Section("Past and cancelled") { ForEach(past) { plan in planLink(plan) } }
             }
         }.navigationTitle("Calendar").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Today", action: showToday) } }
+        .onChange(of: page) { _, value in
+            extendPages(near: value)
+            if let day = Self.selection(in: date(for: value), preferredDay: preferredDay) { selected = day }
+        }
         .refreshable { await refresh() }.task { await refresh() }
+    }
+    private func monthGrid(for month: Date) -> some View {
+        let days = Self.monthDays(for: month)
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 8) {
+            ForEach(days.indices, id: \.self) { index in
+                if let date = days[index] {
+                    let active = Calendar.current.isDate(date, inSameDayAs: selected)
+                    Button {
+                        selected = date
+                        preferredDay = Calendar.current.component(.day, from: date)
+                    } label: {
+                        VStack(spacing: 3) {
+                            Text("\(Calendar.current.component(.day, from: date))").font(.body).lineLimit(1).minimumScaleFactor(0.65)
+                            Circle().fill(hasEvents(date) ? (active ? PalTheme.onAccent : PalTheme.accentText) : .clear).frame(width: 4, height: 4)
+                        }.frame(maxWidth: .infinity, minHeight: dayHeight)
+                            .foregroundStyle(active ? PalTheme.onAccent : PalTheme.ink)
+                            .background(active ? PalTheme.accent : .clear, in: RoundedRectangle(cornerRadius: 12))
+                    }.buttonStyle(.plain).accessibilityLabel(date.formatted(date: .complete, time: .omitted))
+                        .accessibilityValue(hasEvents(date) ? "Has plans" : "")
+                        .accessibilityAddTraits(active ? .isSelected : [])
+                } else { Color.clear.frame(height: dayHeight).accessibilityHidden(true) }
+            }
+        }.padding(.horizontal, 2)
     }
     private func planLink(_ plan: GroupPlan) -> some View {
         NavigationLink { PlanDetailView(group: group, plan: plan) } label: {
@@ -318,8 +376,27 @@ struct GroupCalendarView: View {
             } icon: { Image(systemName: "bell").foregroundStyle(.secondary) }
         }
     }
-    private func moveMonth(_ delta: Int) { if let date = Calendar.current.date(byAdding: .month, value: delta, to: month) { month = date } }
-    private func refresh() async { do { try await store.loadState(group) } catch { store.report(error) } }
+    private func date(for page: Int) -> Date { Calendar.current.date(byAdding: .month, value: page, to: anchor) ?? anchor }
+    private func extendPages(near page: Int) {
+        if let first = monthPages.first, page <= first + 2 { monthPages.insert(contentsOf: (first - 12)..<first, at: 0) }
+        if let last = monthPages.last, page >= last - 2 { monthPages.append(contentsOf: (last + 1)...(last + 12)) }
+    }
+    private func moveMonth(_ delta: Int) {
+        let next = page + delta
+        extendPages(near: next)
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { page = next }
+    }
+    private func showToday() {
+        let today = Date()
+        preferredDay = Calendar.current.component(.day, from: today)
+        selected = Calendar.current.startOfDay(for: today)
+        if let start = Calendar.current.dateInterval(of: .month, for: today)?.start,
+           let offset = Calendar.current.dateComponents([.month], from: anchor, to: start).month {
+            extendPages(near: offset)
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { page = offset }
+        }
+    }
+    private func refresh() async { do { try await store.loadState(group) } catch { /* State status supplies retry while preserving the calendar. */ } }
 }
 
 struct PlanDetailView: View {
@@ -330,106 +407,133 @@ struct PlanDetailView: View {
     @State private var busy = false
     @State private var cancelling = false
     @State private var bookingReference = ""
+    @State private var recordingBooking = false
     @State private var calendarDraft: AppleCalendarDraft?
     @State private var savedCalendarVersion: Int?
-    private var current: GroupPlan { (store.states[group.id] ?? .empty).plans.first { $0.id == plan.id } ?? plan }
+    private var state: GroupState { store.states[group.id] ?? .empty }
+    private var current: GroupPlan { state.plans.first { $0.id == plan.id } ?? plan }
+    private var place: GroupPlace? { state.places.first { $0.id == current.placeID } }
     var body: some View {
-        List {
-            Section {
-                Text(current.title).font(.title2.bold())
-                if let date = current.startsAt.flatMap(PalDate.date) { Label(date.formatted(date: .complete, time: .shortened), systemImage: "calendar") }
-                Text(current.status.capitalized).foregroundStyle(.secondary)
-                if let notes = current.notes, !notes.isEmpty { Text(notes) }
-                if let place = (store.states[group.id] ?? .empty).places.first(where: { $0.id == current.placeID }) {
-                    NavigationLink { PlaceDetailView(group: group, place: place) } label: { Label(place.name, systemImage: "mappin.and.ellipse") }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Text(current.status == "draft" ? "PROPOSED" : current.status.uppercased()).font(.caption.weight(.semibold)).tracking(1).foregroundStyle(.secondary)
+                        Spacer()
+                        Image("DoodleCalendar").renderingMode(.template).resizable().scaledToFit().frame(width: 38, height: 38).foregroundStyle(PalTheme.accentText).accessibilityHidden(true)
+                    }
+                    Text(current.title).font(.largeTitle.weight(.bold)).fixedSize(horizontal: false, vertical: true)
+                    if let date = current.startsAt.flatMap(PalDate.date) {
+                        Text(date.formatted(date: .complete, time: .omitted)).font(.headline)
+                        HStack(spacing: 6) {
+                            Text(date.formatted(date: .omitted, time: .shortened))
+                            if let end = current.endsAt.flatMap(PalDate.date) { Text("– " + end.formatted(date: .omitted, time: .shortened)) }
+                            Text(TimeZone.current.abbreviation(for: date) ?? "").foregroundStyle(.secondary)
+                        }.font(.title3)
+                    } else { Text("Time to be decided").foregroundStyle(.secondary) }
+                    if let place {
+                        NavigationLink { PlaceDetailView(group: group, place: place) } label: {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "mappin.and.ellipse").frame(width: 22)
+                                VStack(alignment: .leading, spacing: 4) { Text(place.name).font(.headline); if let address = place.address { Text(address).font(.subheadline).foregroundStyle(.secondary) } }
+                                Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                            }.foregroundStyle(.primary).frame(minHeight: 44)
+                        }.buttonStyle(.plain)
+                    }
+                    if let notes = current.notes, !notes.isEmpty { Text(notes).font(.body).foregroundStyle(.secondary) }
+                }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))
+                if let issue = store.stateFetch[group.id]?.issue {
+                    HStack { Text("Showing saved details.").font(.caption).foregroundStyle(.secondary); Spacer(); Button("Retry") { Task { try? await store.loadState(group) } }.accessibilityHint(issue) }
                 }
-            }
-                if savedCalendarVersion != nil || (current.status == "confirmed" && current.attendees.contains(where: { $0.userID == store.userID && $0.status == "going" })) {
-                    Section("Apple Calendar") {
+                if current.status == "draft" {
+                    if current.startsAt.flatMap(PalDate.date).map({ $0 > Date() }) == true {
+                        Text("Confirm the plan. Everyone RSVPs separately.").font(.subheadline).foregroundStyle(.secondary)
+                        Button { action("plan.confirm") } label: { Text("Confirm plan").font(.headline).frame(maxWidth: .infinity, minHeight: 50) }.buttonStyle(.borderedProminent).tint(PalTheme.accent).foregroundStyle(PalTheme.onAccent).disabled(busy)
+                    } else {
+                        Text(current.startsAt == nil ? "Choose a time before confirming." : "This proposed time has passed.").font(.subheadline).foregroundStyle(.secondary)
+                        Button { editing = true } label: { Text("Update plan").font(.headline).frame(maxWidth: .infinity, minHeight: 50) }.buttonStyle(.borderedProminent).tint(PalTheme.accent).foregroundStyle(PalTheme.onAccent).disabled(busy)
+                    }
+                }
+                if current.canRSVP() {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(RSVPButtons.prompt(for: current.response(for: store.userID))).font(.title3.weight(.semibold))
+                        RSVPButtons(selected: current.response(for: store.userID), busy: busy) { action("plan.rsvp", ["status": .string($0)]) }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(current.status == "draft" ? "Group members" : current.attendanceSummary(memberCount: state.members.count)).font(.subheadline).foregroundStyle(.secondary)
+                    ForEach(state.members) { member in
+                        NavigationLink { MemberDetailView(groupID: group.id, member: member) } label: {
+                        HStack(spacing: 12) {
+                            AvatarView(name: member.displayName ?? "Member", url: member.avatarURL, size: 40)
+                            Text(member.userID == store.userID ? "You" : member.displayName ?? "Member")
+                            Spacer()
+                            let status = current.response(for: member.userID)
+                            if current.status != "draft" { Text(status == "going" ? "Going" : status == "maybe" ? "Maybe" : status == "declined" ? "Can’t go" : "No reply").font(.subheadline).foregroundStyle(status == "going" ? PalTheme.accentText : .secondary) }
+                        }.frame(minHeight: 44).foregroundStyle(.primary)
+                        }.buttonStyle(.plain)
+                    }
+                }
+                if current.canRSVP(), let place {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Reservation").font(.title3.weight(.semibold))
+                        Text(current.bookingStatus?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Not booked").font(.subheadline).foregroundStyle(.secondary)
+                        if let reference = current.bookingReference, !reference.isEmpty { Text(reference).font(.body).textSelection(.enabled) }
+                        if let link = place.bookingURL ?? place.website, let url = URL(string: link), ["https", "http"].contains(url.scheme) {
+                            Link(destination: url) { Label(place.bookingURL == nil ? "Visit website" : "Open booking page", systemImage: "arrow.up.right").frame(minHeight: 44) }.tint(PalTheme.accentText)
+                        }
+                        DisclosureGroup("Record a reservation", isExpanded: $recordingBooking) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Complete the booking on the website, then save the details here.").font(.footnote).foregroundStyle(.secondary)
+                                TextField("Confirmation reference (optional)", text: $bookingReference).textFieldStyle(.roundedBorder)
+                                Button("Mark as booked") { action("plan.booking", ["status": .string("booked"), "reference": .string(bookingReference)]) }.disabled(busy)
+                                Button("Reservation still needed") { action("plan.booking", ["status": .string("needed")]) }.disabled(busy)
+                            }.padding(.top, 8)
+                        }.tint(PalTheme.ink)
+                    }
+                }
+                if savedCalendarVersion != nil || (current.canRSVP() && current.response(for: store.userID) == "going") {
+                    VStack(alignment: .leading, spacing: 10) {
                         if let savedCalendarVersion {
-                            Label("Saved a Calendar copy", systemImage: "checkmark.circle")
-                            if current.status == "cancelled" {
-                                Text("This plan was cancelled. Remove its Calendar copy yourself.").font(.footnote).foregroundStyle(.secondary)
-                            } else if !current.attendees.contains(where: { $0.userID == store.userID && $0.status == "going" }) {
-                                Text("You’re no longer going. Remove its Calendar copy if you don’t need it.").font(.footnote).foregroundStyle(.secondary)
-                            } else if savedCalendarVersion != (current.version ?? 1) {
-                                Text("Plan changed. Update its existing copy in Calendar.").font(.footnote).foregroundStyle(.secondary)
-                            }
-                        } else {
-                            Button("Add to Calendar", systemImage: "calendar.badge.plus", action: reviewCalendarCopy).disabled(busy)
-                        }
-                        Text("Changes in Pal do not update this copy.").font(.footnote).foregroundStyle(.secondary)
+                            Label("Saved to Apple Calendar", systemImage: "checkmark.circle").font(.subheadline)
+                            if current.status == "cancelled" || current.response(for: store.userID) != "going" { Text("Remove the Calendar copy if you no longer need it.").font(.footnote).foregroundStyle(.secondary) }
+                            else if savedCalendarVersion != (current.version ?? 1) { Text("This plan changed. Update its existing Calendar copy.").font(.footnote).foregroundStyle(.secondary) }
+                        } else { Button("Add to Apple Calendar", systemImage: "calendar.badge.plus", action: reviewCalendarCopy).frame(minHeight: 44).disabled(busy) }
+                        Text("You review and save a copy. Later changes stay in Pal.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
-            if current.status != "cancelled" {
-                Section("Your RSVP") {
-                    ForEach(["going", "maybe", "declined"], id: \.self) { status in
-                        Button { action("plan.rsvp", ["status": .string(status)]) } label: {
-                            HStack {
-                                Text(status == "declined" ? "Can’t go" : status.capitalized)
-                                Spacer()
-                                if current.attendees.contains(where: { $0.userID == store.userID && $0.status == status }) { Image(systemName: "checkmark").foregroundStyle(PalTheme.accentText) }
-                            }
-                        }.disabled(busy)
-                    }
-                    Text("\(current.attendees.filter { $0.status == "going" }.count) going").font(.footnote).foregroundStyle(.secondary)
-                }
-                if current.status == "confirmed" {
-                    Section("Reservation") {
-                        if let place = (store.states[group.id] ?? .empty).places.first(where: { $0.id == current.placeID }) {
-                            if let link = place.bookingURL, let url = URL(string: link), ["https", "http"].contains(url.scheme) {
-                                Link("Book", destination: url).tint(PalTheme.accentText)
-                            } else if let link = place.website, let url = URL(string: link), ["https", "http"].contains(url.scheme) {
-                                Link("Visit website", destination: url).tint(PalTheme.accentText)
-                            }
-                        }
-                        Text(current.bookingStatus?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Not booked")
-                        if let reference = current.bookingReference { Text(reference).textSelection(.enabled) }
-                        Text("After booking on the website, enter your confirmation reference.").font(.footnote).foregroundStyle(.secondary)
-                        TextField("Confirmation reference (optional)", text: $bookingReference)
-                        Button("Mark reservation booked") { action("plan.booking", ["status": .string("booked"), "reference": .string(bookingReference)]) }.disabled(busy)
-                        Button("Reservation needed") { action("plan.booking", ["status": .string("needed")]) }.disabled(busy)
-                    }
-                }
-                Section {
-                    if current.status != "confirmed" { Button("Confirm plan") { action("plan.confirm") }.tint(PalTheme.accentText).disabled(busy) }
-                    Button("Edit plan") { editing = true }.disabled(busy)
-                    Button("Cancel plan", role: .destructive) { cancelling = true }.disabled(busy)
-                }
-            }
+                if busy { ProgressView().frame(maxWidth: .infinity) }
+            }.padding(20)
         }.navigationTitle("Plan").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if current.status != "cancelled" { ToolbarItem(placement: .topBarTrailing) {
+                Menu { Button("Edit plan", systemImage: "pencil") { editing = true }; Button("Cancel plan", systemImage: "xmark", role: .destructive) { cancelling = true } } label: { Image(systemName: "ellipsis") }.disabled(busy).accessibilityLabel("Plan actions")
+            } }
+        }
+        .task { try? await store.loadState(group) }
+        .refreshable { try? await store.loadState(group) }
         .onAppear {
             bookingReference = current.bookingReference ?? ""
-            if let userID = store.userID {
-                savedCalendarVersion = AppleCalendarReceipt.savedVersion(userID: userID, planID: plan.id)
-            }
+            if let userID = store.userID { savedCalendarVersion = AppleCalendarReceipt.savedVersion(userID: userID, planID: plan.id) }
         }
         .sheet(item: $calendarDraft) { draft in
             AppleCalendarEditor(draft: draft) { result in
-                if store.userID == draft.userID,
-                   AppleCalendarReceipt.record(action: result, userID: draft.userID, planID: draft.planID, version: draft.version) {
-                    savedCalendarVersion = draft.version
-                }
+                if store.userID == draft.userID, AppleCalendarReceipt.record(action: result, userID: draft.userID, planID: draft.planID, version: draft.version) { savedCalendarVersion = draft.version }
                 calendarDraft = nil
             }
         }
         .sheet(isPresented: $editing) { NavigationStack { PlanEditor(group: group, plan: current) } }
-        .confirmationDialog("Cancel this group plan?", isPresented: $cancelling, titleVisibility: .visible) {
-            Button("Cancel plan", role: .destructive) { action("plan.cancel") }
-        }
+        .confirmationDialog("Cancel this group plan?", isPresented: $cancelling, titleVisibility: .visible) { Button("Cancel plan", role: .destructive) { action("plan.cancel") } }
     }
     private func reviewCalendarCopy() {
         guard let userID = store.userID, savedCalendarVersion == nil else { return }
-        do {
-            calendarDraft = try AppleCalendarDraft(plan: current, group: group, state: store.states[group.id] ?? .empty, userID: userID)
-        } catch { store.report(error) }
+        do { calendarDraft = try AppleCalendarDraft(plan: current, group: group, state: state, userID: userID) } catch { store.report(error) }
     }
     private func action(_ name: String, _ extra: [String: JSONValue] = [:]) {
-        busy = true
+        guard !busy else { return }; busy = true
         Task {
             defer { busy = false }
-            do { try await store.mutate(group, action: name, data: extra.merging(["id": .string(plan.id.uuidString)]) { _, new in new }) }
-            catch { store.report(error) }
+            do { try await store.mutate(group, action: name, data: extra.merging(["id": .string(plan.id.uuidString)]) { _, new in new }) } catch { store.report(error) }
         }
     }
 }
@@ -455,7 +559,7 @@ struct PlanEditor: View {
                 ForEach((store.states[group.id] ?? .empty).places) { place in Text(place.name).tag(Optional(place.id)) }
             }
             TextField("Notes", text: $notes, axis: .vertical).lineLimit(3...6)
-            if ends <= starts { Text("The end must be after the start.").foregroundStyle(.red) }
+            if ends <= starts { Text("The end must be after the start.").foregroundStyle(PalTheme.error) }
             if busy { ProgressView() }
         }.disabled(busy).navigationTitle(plan == nil ? "New plan" : "Edit plan").navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -518,7 +622,7 @@ struct ReminderEditor: View {
                 TextField("What should Pal remind the group?", text: $bodyText, axis: .vertical)
                     .lineLimit(2...5).disabled(creationData != nil)
                 if bodyText.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count > 2000 {
-                    Text("Use 2,000 characters or fewer.").font(.footnote).foregroundStyle(.red)
+                    Text("Use 2,000 characters or fewer.").font(.footnote).foregroundStyle(PalTheme.error)
                 }
                 DatePicker("Remind at", selection: $due, in: Date()...).disabled(creationData != nil)
             } else if let current {

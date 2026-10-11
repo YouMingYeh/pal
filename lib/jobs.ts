@@ -1,7 +1,7 @@
 import { Client } from "eve/client";
 import { admin, checked, env } from "./db";
 import { jobScope, type Job } from "./job-scope";
-import { agentReply, parsedPalReply, sharedUrls } from "./validation";
+import { agentReply, parsedPalOutputs, sharedUrls } from "./validation";
 import { assertPublicURL } from "./research";
 
 export async function dispatchJobs() {
@@ -15,7 +15,6 @@ export async function dispatchJobs() {
       });
       let sessionId = job.result ? JSON.parse(job.result).sessionId as string | undefined : undefined;
       let body: string | undefined;
-      let emotion = "fier";
       let structured: unknown;
       if (sessionId) {
         // shortcut: one turn per job, recover its durable stream instead of sending the request twice.
@@ -43,23 +42,19 @@ export async function dispatchJobs() {
           outputSchema: agentReply,
         });
         sessionId = created.response.sessionId;
-        checked(await db.from("agent_jobs").update({ result: JSON.stringify({ sessionId, format: "v1" }) })
+        checked(await db.from("agent_jobs").update({ result: JSON.stringify({ sessionId, format: "v2" }) })
           .eq("id", job.id).eq("attempts", job.attempts).eq("status", "running"));
         const result = await created.response.result();
         if (result.status === "failed") throw new Error("Pal's durable task failed.");
         body = result.message;
         structured = result.data;
       }
-      const oldSession = job.result && JSON.parse(job.result).format !== "v1";
-      if (structured !== undefined) {
-        const reply = parsedPalReply(structured);
-        body = reply.body;
-        emotion = reply.emotion;
-      }
-      else if (!oldSession) throw new Error("Pal did not return a structured result.");
-      checked(await db.rpc("complete_agent_job_with_emotion", {
-        p_job_id: job.id, p_attempt: job.attempts, p_body: body, p_emotion: emotion,
-        p_result: JSON.stringify({ sessionId, format: "v1", emotion }),
+      const oldSession = job.result && !["v1", "v2"].includes(JSON.parse(job.result).format);
+      if (structured === undefined && !oldSession) throw new Error("Pal did not return a structured result.");
+      const outputs = parsedPalOutputs(structured ?? { reply: body ?? "", emotion: "fier" });
+      checked(await db.rpc("complete_agent_job_with_outputs", {
+        p_job_id: job.id, p_attempt: job.attempts, p_outputs: outputs,
+        p_result: JSON.stringify({ sessionId, format: "v2", emotions: outputs.map(output => output.emotion) }),
       }));
     } catch (error) {
       // Terminal task failures must create a new Eve session on a future retry.

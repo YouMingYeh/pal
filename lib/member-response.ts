@@ -17,7 +17,7 @@ const clarify = () => { throw new Error("The speaker's response is ambiguous. As
 const normalized = (value: string) => value.toLowerCase().replace(/[’‘]/g, "'").replace(/[^\p{L}\p{N}:]+/gu, " ").trim();
 const sameChoices = (a: string[], b: string[]) => a.length === b.length && a.every(value => b.includes(value));
 const either = /^(?:either(?: one| option)?(?: works(?: for me)?)?|both(?: work| works)?(?: for me)?|anything works(?: for me)?|any of (?:them|these) (?:work|works)(?: for me)?|都可以|都行|兩個都可以|两个都可以)[.!。！]*$/i;
-const none = /^(?:none(?: of (?:these|those|them))?(?: work| works)?(?: for me)?|neither(?: works)?(?: for me)?|i (?:can't|cannot) (?:do|make) (?:any|either)(?: of (?:these|those|them))?(?: times?| slots?)?|這些時間都不行|这些时间都不行|都不行)[.!。！]*$/i;
+const none = /^(?:none(?: of (?:these|those|them))?(?: times?| slots?)?(?: work| works)?(?: for me)?|neither(?: works)?(?: for me)?|i (?:can't|cannot) (?:do|make) (?:any|either)(?: of (?:these|those|them))?(?: times?| slots?)?|這些時間都不行|这些时间都不行|都不行)[.!。！]*$/i;
 
 function explicitRsvp(text: string, title: string) {
   const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -69,7 +69,7 @@ function timeChoices(text: string, poll: Poll, source: SourceMessage, timezone: 
   }).map(option => option.id);
 }
 
-export function prepareMemberResponse(raw: unknown, batch: SourceMessage[], state: ResponseState, groupId: string, now = Date.now()) {
+export function prepareMemberResponse(raw: unknown, batch: SourceMessage[], state: ResponseState, groupId: string, now = Date.now(), allowCollectedAvailability = false) {
   const input: Input = memberResponseInput.parse(raw);
   const source = batchSpeaker(batch, input.source_message_id);
   if (source.group_id !== groupId || source.body.trim() !== input.evidence) throw new Error("Use the entire verified speaker message as verbatim evidence.");
@@ -101,11 +101,17 @@ export function prepareMemberResponse(raw: unknown, batch: SourceMessage[], stat
     return { source, response: { status: input.status, plan_version: target.version } };
   }
   const target = state.polls.find(poll => poll.id === input.target_id && poll.group_id === groupId);
-  if (!target || target.status !== "open" || Date.parse(target.deadline_at) <= now || Date.parse(source.created_at) < Date.parse(target.created_at)) throw new Error("Choose an open group poll that existed when this message was sent.");
+  // Dated first-person schedules can precede a board created to collect them.
+  // The final SQL mutation verifies that this board was created by this exact
+  // active job. Choice/either/none responses still require an existing board.
+  const collectedSchedule = allowCollectedAvailability && target?.kind === "time" && input.response === "options";
+  if (!target || target.status !== "open" || Date.parse(target.deadline_at) <= now
+    || Date.parse(source.created_at) < Date.parse(target.created_at) && !collectedSchedule) throw new Error("Choose an open group poll that existed when this message was sent.");
   if (/\b(?:maybe|might|may|perhaps|probably|not sure)\b/i.test(text)) clarify();
   const active = state.polls.filter(poll => poll.status === "open" && Date.parse(poll.deadline_at) > now);
   if (input.response === "either" || input.response === "none") {
-    if (active.length !== 1 || !(input.response === "either" ? either : none).test(text) || input.option_ids.length || input.response === "none" && target.kind !== "time") clarify();
+    const candidates = input.response === "none" ? active.filter(poll => poll.kind === "time") : active;
+    if (candidates.length !== 1 || !(input.response === "either" ? either : none).test(text) || input.option_ids.length || input.response === "none" && target.kind !== "time") clarify();
     return { source, response: { kind: input.response, option_ids: [] } };
   }
   if (!input.option_ids.length || new Set(input.option_ids).size !== input.option_ids.length) clarify();
@@ -117,6 +123,6 @@ export function prepareMemberResponse(raw: unknown, batch: SourceMessage[], stat
   const selected = target.kind === "time" ? timeChoices(text, target, source, state.settings.timezone) : direct;
   const constrained = target.kind === "time" && /\b(?:after|from|at|before|next)\b/i.test(text);
   if (!sameChoices(input.option_ids, constrained || selected.length ? selected : direct)) clarify();
-  if (active.length !== 1 && !normalized(text).includes(normalized(target.question))) clarify();
+  if (active.filter(poll => poll.kind === target.kind).length !== 1 && !normalized(text).includes(normalized(target.question))) clarify();
   return { source, response: { kind: "options", option_ids: input.option_ids } };
 }

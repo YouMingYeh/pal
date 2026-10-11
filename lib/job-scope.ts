@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { admin, checked } from "./db";
-import { parseAgentAction, type actionSchemas } from "./validation";
+import { parseAgentAction, type actionSchemas, type MessageMention } from "./validation";
 
 export type Job = {
   id: string; group_id: string; requester_id: string; message_id: string;
   attempts: number; status: string; result: string | null; lease_until: string | null;
   batch_message_ids?: string[]; explicit_mention?: boolean; job_kind?: "chat" | "weekly";
 };
-export type SourceMessage = { id: string; group_id: string; sender_id: string; role: "user"; body: string; created_at: string };
+export type SourceMessage = { id: string; group_id: string; sender_id: string; role: "user"; body: string; created_at: string; mentions?: MessageMention[]; reply_to_id?: string | null };
 
 export async function jobScope(jobId: string) {
   const db = admin();
@@ -19,7 +19,7 @@ export async function jobScope(jobId: string) {
     .eq("group_id", job.group_id).eq("user_id", job.requester_id).maybeSingle());
   if (!membership) throw new Error("Requester is no longer a group member.");
   const ids = job.batch_message_ids?.length ? job.batch_message_ids : [job.message_id];
-  const batch = checked(await db.from("messages").select("id,group_id,sender_id,role,body,created_at")
+  const batch = checked(await db.from("messages").select("id,group_id,sender_id,role,body,created_at,mentions,reply_to_id")
     .eq("group_id", job.group_id).eq("role", "user").in("id", ids).order("created_at")) as SourceMessage[];
   if (!batch?.length && job.job_kind !== "weekly") throw new Error("Task source messages are unavailable.");
   return { job, db, batch: batch ?? [] };

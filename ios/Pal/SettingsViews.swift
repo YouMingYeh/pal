@@ -47,6 +47,7 @@ struct ProfileView: View {
     @State private var photoTaskID = UUID()
     @State private var processingPhoto = false
     @State private var loadingProfile = true
+    @State private var profileDraftInitialized = false
     @State private var authorization: UNAuthorizationStatus?
     @State private var calendarStatus: CalendarStatus?
     @State private var calendarIssue: String?
@@ -82,7 +83,7 @@ struct ProfileView: View {
                             }
                             Image(systemName: "camera.fill").font(.system(size: 15, weight: .semibold))
                                 .frame(width: 32, height: 32).background(.regularMaterial, in: Circle())
-                                .overlay(Circle().stroke(.white.opacity(0.45), lineWidth: 1))
+                                .overlay(Circle().stroke(Color(uiColor: .separator), lineWidth: 1))
                                 .accessibilityHidden(true)
                         }
                     }.buttonStyle(.plain).accessibilityLabel("Edit profile photo")
@@ -96,6 +97,9 @@ struct ProfileView: View {
                     Text("Name").foregroundStyle(.secondary)
                     TextField("Your name", text: $name).textContentType(.name).multilineTextAlignment(.trailing)
                 }
+            }
+            if store.profileFetch.issue != nil || (store.profile == nil && loadingProfile) {
+                Section { PalFetchStatusView(state: store.profileFetch, hasContent: store.profile != nil) { Task { await loadDraftProfile() } } }
             }
             Section("Notifications") {
                 if let authorization {
@@ -126,9 +130,9 @@ struct ProfileView: View {
                     else if calendarIssue != nil { Text("Unable to check connection").foregroundStyle(.secondary) }
                     else { ProgressView("Checking connection…") }
                 }
-                if let issue = calendarStatus?.syncError, !issue.isEmpty { Text(issue).font(.footnote).foregroundStyle(.red) }
+                if let issue = calendarStatus?.syncError, !issue.isEmpty { Text(issue).font(.footnote).foregroundStyle(PalTheme.error) }
                 if let issue = calendarIssue {
-                    Text(issue).font(.footnote).foregroundStyle(.red)
+                    Text(issue).font(.footnote).foregroundStyle(PalTheme.error)
                     Button("Try again") { Task { await refreshCalendar() } }
                 }
                 if calendarStatus?.connected == true {
@@ -161,16 +165,12 @@ struct ProfileView: View {
             CameraCapture(onCapture: prepareCameraPhoto, onError: { error = $0.localizedDescription })
         }
         .task {
-            if loadingProfile {
-                do {
-                    try await store.loadProfile()
-                    name = store.profile?.displayName ?? ""
-                    originalName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                } catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
-                loadingProfile = false
-            }
-            await refreshNotificationAuthorization()
-            await refreshCalendar()
+            seedProfileDraft()
+            calendarStatus = store.cachedCalendarStatus
+            async let profileLoad: Void = loadDraftProfile()
+            async let notificationLoad: Void = refreshNotificationAuthorization()
+            async let calendarLoad: Void = refreshCalendar()
+            _ = await (profileLoad, notificationLoad, calendarLoad)
         }
         .task(id: selectedPhoto) {
             guard !Task.isCancelled else { return }
@@ -204,7 +204,7 @@ struct ProfileView: View {
                 busy = true
                 Task {
                     defer { busy = false }
-                    do { try await store.disconnectCalendar(); await refreshCalendar() }
+                    do { try await store.disconnectCalendar(); await refreshCalendar(force: true) }
                     catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
                 }
             }
@@ -310,15 +310,30 @@ struct ProfileView: View {
         busy = true
         Task {
             defer { busy = false }
-            do { try await calendarLink.connect(store: store); await refreshCalendar() }
+            do { try await calendarLink.connect(store: store); await refreshCalendar(force: true) }
             catch { if !PalCancellation.isCancellation(error) { self.error = error.localizedDescription } }
         }
     }
 
-    private func refreshCalendar() async {
+    private func seedProfileDraft() {
+        guard !profileDraftInitialized, let profile = store.profile else { return }
+        name = profile.displayName ?? ""
+        originalName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        profileDraftInitialized = true
+        loadingProfile = false
+    }
+
+    private func loadDraftProfile() async {
+        seedProfileDraft()
+        do { try await store.loadProfile(); seedProfileDraft() }
+        catch { /* The fetch status keeps the cached draft and supplies retry. */ }
+        loadingProfile = false
+    }
+
+    private func refreshCalendar(force: Bool = false) async {
         calendarIssue = nil
-        do { calendarStatus = try await store.calendarStatus() }
-        catch { if !PalCancellation.isCancellation(error) { calendarStatus = nil; calendarIssue = error.localizedDescription } }
+        do { calendarStatus = try await store.calendarStatus(force: force) }
+        catch { if !PalCancellation.isCancellation(error) { calendarIssue = error.localizedDescription } }
     }
 }
 
@@ -331,11 +346,16 @@ struct GroupDetailsView: View {
     var body: some View {
         Form {
             Section("Members") {
+                if store.states[group.id] == nil || store.stateFetch[group.id]?.issue != nil {
+                    PalFetchStatusView(state: store.stateFetch[group.id] ?? PalFetchState(), hasContent: store.states[group.id] != nil) { Task { await refresh() } }
+                }
                 ForEach(state.members) { member in
-                    HStack {
-                        AvatarView(name: member.displayName ?? "Member", url: member.avatarURL)
-                        Text(member.displayName ?? "Member")
-                        if member.userID == store.userID { Text("You").font(.caption).foregroundStyle(.secondary) }
+                    NavigationLink { MemberDetailView(groupID: group.id, member: member) } label: {
+                        HStack {
+                            AvatarView(name: member.displayName ?? "Member", url: member.avatarURL, size: 40)
+                            Text(member.displayName ?? "Member")
+                            if member.userID == store.userID { Text("You").font(.caption).foregroundStyle(.secondary) }
+                        }
                     }
                 }
                 Button("Invite to group", systemImage: "qrcode") { showingInvite = true }
@@ -347,6 +367,6 @@ struct GroupDetailsView: View {
             .sheet(isPresented: $showingInvite) { GroupInviteQRView(group: group) }
     }
     private func refresh() async {
-        do { try await store.loadState(group) } catch { store.report(error) }
+        do { try await store.loadState(group) } catch { /* State status supplies retry without removing cached members. */ }
     }
 }

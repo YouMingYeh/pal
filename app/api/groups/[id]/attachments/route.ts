@@ -16,7 +16,13 @@ export function POST(request: Request, context: Context) {
     const group = checked(await db.from("groups").select("is_direct").eq("id", id).single());
     const { input, file } = await attachmentForm(request);
     const result = await sendAttachment(id, user.id, input, file);
-    after(async () => { if (!group?.is_direct && !/@pal\b/i.test(input.body ?? "")) await sleep(10500); await dispatchJobs(); });
+    after(async () => {
+      let addressedToPal = /@pal\b/i.test(input.body ?? "") || input.mentions?.some(mention => mention.type === "pal");
+      if (!group?.is_direct && !addressedToPal && input.reply_to_id) addressedToPal = checked(await db.from("messages").select("role")
+        .eq("group_id", id).eq("id", input.reply_to_id).maybeSingle())?.role === "pal";
+      if (!group?.is_direct && !addressedToPal) await sleep(10500);
+      await dispatchJobs();
+    });
     return Response.json(result, { status: 201 });
   });
 }

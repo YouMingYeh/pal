@@ -53,7 +53,7 @@ struct PalTypingLane: View {
     var body: some View {
         HStack(spacing: 6) {
             if visible {
-                PalMascotAvatar(emotion: "attentif", animated: animated, size: 32)
+                PalMascotAvatar(emotion: "attentif", animated: animated, size: 36)
                 Text("Pal is typing…").font(.body).foregroundStyle(.secondary)
             }
             Spacer()
@@ -71,7 +71,11 @@ struct RootView: View {
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { if let url = $0.webpageURL { store.handleURL(url) } }
             .task(id: store.userID) {
                 guard store.isSignedIn else { return }
-                do { try await store.loadProfile(); try await store.loadGroups(); await store.acceptPendingInvite(); await store.acceptPendingNotification()
+                async let profile: Void = store.loadProfile()
+                async let groups: Void = store.loadGroups()
+                do { _ = try await (profile, groups) } catch { /* Each screen retains its content and offers retry. */ }
+                await store.acceptPendingInvite(); await store.acceptPendingNotification()
+                do {
                     if store.profile?.notificationPreferences?.enabled != false { await PalNotifications.registerIfAuthorized() }
                     if store.profile?.notificationPreferences?.enabled != false, let token = UserDefaults.standard.string(forKey: "PalDeviceToken") {
                         do { try await store.registerDevice(token: token) }
@@ -174,23 +178,46 @@ struct GroupsView: View {
     @State private var create = false
     @State private var join = false
     @State private var profile = false
+    private var sharedGroups: [ChatGroup] { store.groups.filter { !$0.isDirect } }
     var body: some View {
         NavigationStack(path: $store.path) {
-            List {
-                if store.groups.isEmpty { ContentUnavailableView("No chats", systemImage: "bubble.left.and.bubble.right", description: Text("Create a group or join with an invite.")) }
-                ForEach(store.groups.filter(\.isDirect) + store.groups.filter { !$0.isDirect }) { group in
-                    NavigationLink(value: group.id) {
-                        HStack(spacing: 12) {
-                            if group.isDirect { PalMascotAvatar(size: 50) }
-                            else { AvatarView(name: group.name, url: group.avatarURL, size: 50) }
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack { Text(group.isDirect ? "Pal" : group.name).font(.headline); Spacer(); if let date = (group.lastMessage?.createdAt).flatMap(PalDate.date) { Text(date, style: .time).font(.caption).foregroundStyle(.secondary) } }
-                                HStack { Text(group.lastMessage?.body ?? (group.isDirect ? "Your private chat" : "Start a conversation")).font(.subheadline).foregroundStyle(.secondary).lineLimit(2); Spacer(); if let unread = group.unreadCount, unread > 0 { Text("\(unread)").font(.caption.bold()).foregroundStyle(PalTheme.onInk).padding(6).background(PalTheme.ink, in: Circle()).accessibilityLabel("\(unread) unread messages") } }
+            Group {
+                if store.groups.isEmpty {
+                    if store.groupsFetch.issue != nil {
+                        PalFetchStatusView(state: store.groupsFetch, hasContent: false) { Task { await refresh() } }
+                            .padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if !store.groupsFetch.hasLoaded {
+                        VStack(spacing: 14) {
+                            ProgressView().controlSize(.large)
+                            Text("Loading chats…").font(.subheadline).foregroundStyle(.secondary)
+                        }.frame(maxWidth: .infinity, maxHeight: .infinity).accessibilityElement(children: .combine)
+                    } else {
+                        emptyInbox(title: "No chats yet").padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                } else {
+                    List {
+                        if store.groupsFetch.issue != nil {
+                            PalFetchStatusView(state: store.groupsFetch, hasContent: true) { Task { await refresh() } }.listRowSeparator(.hidden)
+                        }
+                        ForEach(store.groups.filter(\.isDirect) + sharedGroups) { group in
+                            NavigationLink(value: group.id) {
+                                HStack(spacing: 12) {
+                                    if group.isDirect { PalMascotAvatar(animated: phase == .active, size: 54) }
+                                    else { AvatarView(name: group.name, url: group.avatarURL, size: 54) }
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack { Text(group.isDirect ? "Pal" : group.name).font(.headline); Spacer(); if let date = (group.lastMessage?.createdAt).flatMap(PalDate.date) { Text(date, style: .time).font(.caption).foregroundStyle(.secondary) } }
+                                        HStack { Text(group.lastMessage?.body ?? (group.isDirect ? "Your private chat" : "Start a conversation")).font(.subheadline).foregroundStyle(.secondary).lineLimit(2); Spacer(); if let unread = group.unreadCount, unread > 0 { Text("\(unread)").font(.caption.bold()).foregroundStyle(PalTheme.onInk).padding(6).background(PalTheme.ink, in: Circle()).accessibilityLabel("\(unread) unread messages") } }
+                                    }
+                                }.padding(.vertical, 5)
                             }
-                        }.padding(.vertical, 5)
-                    }.listRowSeparator(.hidden)
+                            .listRowSeparator(.hidden)
+                        }
+                        if store.groupsFetch.hasLoaded && sharedGroups.isEmpty {
+                            emptyInbox(title: "No groups yet").padding(.vertical, 32).frame(maxWidth: .infinity).listRowSeparator(.hidden)
+                        }
+                    }.listStyle(.plain).listRowSeparator(.hidden)
                 }
-            }.listStyle(.plain).listRowSeparator(.hidden).navigationTitle("Pal").navigationBarTitleDisplayMode(.inline)
+            }.background(Color(uiColor: .systemBackground)).navigationTitle("Pal").navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.hidden, for: .navigationBar)
                 .navigationDestination(for: UUID.self) { id in if let group = store.groups.first(where: { $0.id == id }) { ChatView(group: group) } }
                 .toolbar {
@@ -208,8 +235,29 @@ struct GroupsView: View {
                 .sheet(isPresented: $join) { GroupJoinView() }
         }
     }
-    private func refresh() async { do { try await store.loadGroups() } catch { store.report(error) } }
+    private func emptyInbox(title: String) -> some View {
+        VStack(spacing: 20) {
+            Image("DoodleChat").renderingMode(.template).resizable().scaledToFit()
+                .frame(width: 88, height: 88).foregroundStyle(.secondary).accessibilityHidden(true)
+            VStack(spacing: 7) {
+                Text(title).font(.title3.weight(.semibold))
+                Text("Create a group or join with an invite.").font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            VStack(spacing: 10) {
+                Button { create = true } label: { Text("Create group").frame(maxWidth: .infinity, minHeight: 24) }
+                    .buttonStyle(.borderedProminent).tint(PalTheme.ink).foregroundStyle(PalTheme.onInk)
+                Button { join = true } label: { Text("Join group").frame(maxWidth: .infinity, minHeight: 24) }
+                    .buttonStyle(.bordered).tint(PalTheme.ink)
+            }.controlSize(.large).frame(maxWidth: 240)
+        }.frame(maxWidth: 340)
+    }
+    private func refresh() async { do { try await store.loadGroups() } catch { /* Keep the inbox cache visible and offer inline retry. */ } }
 
+}
+
+private struct ChatBottomOffset: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 struct ChatView: View {
@@ -226,6 +274,8 @@ struct ChatView: View {
     @State private var processingPhoto = false
     @State private var photoPreparationID = UUID()
     @State private var reply: ChatMessage?
+    @State private var scrollToReply: UUID?
+    @State private var selectedMentions: [MessageMention: String] = [:]
     @State private var details = false
     @State private var calendar = false
     @State private var map = false
@@ -233,21 +283,35 @@ struct ChatView: View {
     @State private var pollingError: String?
     @State private var lastRead: UUID?
     @State private var typingExpired = false
+    @State private var atBottom = true
     private var state: GroupState { store.states[group.id] ?? .empty }
     private var pending: [OutgoingMessage] { store.outgoing.filter { item in item.groupID == group.id && item.userID == store.userID && !messages.contains(where: { $0.clientID == item.clientID }) } }
     var body: some View {
+        GeometryReader { viewport in
         ScrollViewReader { proxy in
             ScrollView {
                 transcript
-            }.defaultScrollAnchor(.bottom).scrollDismissesKeyboard(.interactively).modifier(ChatScrollEdges())
-                .onChange(of: timeline.last?.id) { _, id in if let id { proxy.scrollTo(id, anchor: .bottom) } }
+            }.coordinateSpace(name: "chatScroll").onPreferenceChange(ChatBottomOffset.self) { bottom in
+                let reachedBottom = bottom <= viewport.size.height + 60
+                if atBottom != reachedBottom { atBottom = reachedBottom }
+            }.defaultScrollAnchor(.bottom).scrollDismissesKeyboard(.interactively).modifier(ChatScrollEdges()).refreshable { await refresh() }
+                                .onChange(of: timeline.last?.id) { _, id in
+                    if let id, atBottom || timeline.last?.message?.senderID == store.userID || pending.last?.id == id { proxy.scrollTo(id, anchor: .bottom) }
+                }
                 .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+                .onChange(of: scrollToReply) { _, id in
+                    if let id { withAnimation { proxy.scrollTo(id, anchor: .center) }; scrollToReply = nil }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if !atBottom { Button { if let id = timeline.last?.id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } } } label: { Image(systemName: "arrow.down").frame(width: 44, height: 44).modifier(PalGlass(cornerRadius: 22)) }.buttonStyle(.plain).accessibilityLabel("Latest messages").padding(.trailing, 16).padding(.bottom, 120) }
+                }
+        }
         }.navigationTitle(group.isDirect ? "Pal" : group.name).navigationBarTitleDisplayMode(.inline)
             .modifier(ChatNavigationSurface())
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    if group.isDirect { HStack(spacing: 8) { PalMascotAvatar(size: 32); Text("Pal").font(.title3.weight(.semibold)) } }
-                    else { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, url: group.avatarURL, size: 32); Text(group.name).font(.title3.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityLabel("Group details") }
+                    if group.isDirect { HStack(spacing: 8) { PalMascotAvatar(animated: phase == .active, size: 36); Text("Pal").font(.title3.weight(.semibold)) } }
+                    else { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, url: group.avatarURL, size: 36); Text(group.name).font(.title3.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityLabel("Group details") }
                 }
                 if !group.isDirect { ToolbarItem(placement: .topBarTrailing) { HStack { Button { calendar = true } label: { Image(systemName: "calendar") }.accessibilityLabel("Group calendar"); Button { map = true } label: { Image(systemName: "map") }.accessibilityLabel("Saved places") } } }
             }
@@ -266,7 +330,7 @@ struct ChatView: View {
             .navigationDestination(isPresented: $calendar) { GroupCalendarView(group: group) }
             .navigationDestination(isPresented: $map) { GroupMapView(group: group) }
             .sheet(item: $routeCard) { card in NavigationStack { PalCardView(group: group, card: card).padding().navigationTitle("Details").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { routeCard = nil } } } } }
-            .onChange(of: store.requestedEntity) { _, card in if let card { if !["choice", "availability"].contains(card.type) { routeCard = card }; store.requestedEntity = nil } }
+            .onChange(of: store.requestedEntity) { _, card in if let card { if !["options", "choice", "availability"].contains(card.type) { routeCard = card }; store.requestedEntity = nil } }
             .task(id: store.typingDeadline(in: group.id)) {
                 typingExpired = false
                 guard let expiry = store.typingDeadline(in: group.id) else { return }
@@ -275,22 +339,32 @@ struct ChatView: View {
             }
             .task(id: phase) {
                 guard phase == .active else { return }
-                if let card = store.requestedEntity { if !["choice", "availability"].contains(card.type) { routeCard = card }; store.requestedEntity = nil }
+                if let card = store.requestedEntity { if !["options", "choice", "availability"].contains(card.type) { routeCard = card }; store.requestedEntity = nil }
                 while !Task.isCancelled { await refresh(); do { try await Task.sleep(for: .seconds(2)) } catch { break } }
             }
     }
     private var timeline: [ChatTimelineItem] {
-        (messages.map(ChatTimelineItem.message) + pending.map(ChatTimelineItem.outgoing)).sorted {
-            let left = PalDate.date($0.createdAt) ?? .distantFuture
-            let right = PalDate.date($1.createdAt) ?? .distantFuture
-            return left == right ? $0.id.uuidString < $1.id.uuidString : left < right
+        var items = messages.map { ChatTimelineItem.message($0) }
+        items.append(contentsOf: pending.map { ChatTimelineItem.outgoing($0) })
+        let dated = items.map { item -> (item: ChatTimelineItem, date: Date) in
+            (item, PalDate.date(item.createdAt) ?? .distantFuture)
         }
+        let ordered = dated.sorted { left, right in
+            if left.date == right.date { return left.item.id.uuidString < right.item.id.uuidString }
+            return left.date < right.date
+        }
+        return ordered.map { $0.item }
     }
     private var transcript: some View {
-        LazyVStack(spacing: 9) {
-            if timeline.isEmpty, store.cachedMessages[group.id] != nil { VStack(spacing: 12) { PalMascotAvatar(size: 54).accessibilityHidden(true); Text("No messages yet").font(.subheadline).foregroundStyle(.secondary) }.padding(.horizontal, 28).padding(.top, 36) }
-            ForEach(Array(timeline.enumerated()), id: \.element.id) { index, item in
-                let previous = index > 0 ? timeline[index - 1] : nil
+        let items = timeline
+        return LazyVStack(spacing: 9) {
+            if items.isEmpty, store.cachedMessages[group.id] == nil {
+                if pollingError == nil { ProgressView("Loading messages…").padding(.vertical, 36) }
+                else { Button("Try again") { Task { await refresh() } }.padding(.vertical, 36) }
+            }
+            if items.isEmpty, store.cachedMessages[group.id] != nil { VStack(spacing: 12) { PalMascotAvatar(size: 54).accessibilityHidden(true); Text("No messages yet").font(.subheadline).foregroundStyle(.secondary) }.padding(.horizontal, 28).padding(.top, 36) }
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                let previous = index > 0 ? items[index - 1] : nil
                 if PalDate.date(item.createdAt) != nil, (previous?.createdAt).flatMap(day) != day(item.createdAt) {
                     Text(PalDate.date(item.createdAt)?.formatted(date: .abbreviated, time: .shortened) ?? "").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.vertical, 10)
                 }
@@ -299,22 +373,47 @@ struct ChatView: View {
                 case .outgoing(let outgoing): pendingRow(outgoing)
                 }
             }
+            Color.clear.frame(height: 1).background(GeometryReader { geometry in Color.clear.preference(key: ChatBottomOffset.self, value: geometry.frame(in: .named("chatScroll")).maxY) })
         }.padding(16)
     }
     private func pendingRow(_ item: OutgoingMessage) -> some View {
         HStack { Spacer(minLength: 44); VStack(alignment: .trailing, spacing: 4) {
+            if let replyID = item.replyToID, let original = messages.first(where: { $0.id == replyID }) {
+                replyPreview(name: memberName(original), body: original.body) { scrollToReply = original.timelineID }
+            }
             if let media = item.attachment { DraftMediaPreview(draft: media, onRemove: nil) }
-            if !item.body.isEmpty { Text(PalText.linked(item.body)).font(.title3).tint(PalTheme.accentOnInk).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(PalTheme.onInk).background(PalTheme.ink, in: RoundedRectangle(cornerRadius: 20)) }
-            if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(.red).frame(minHeight: 44) }
+            if !item.body.isEmpty { Text(PalText.linked(item.body, mentions: item.mentions ?? [], members: state.members)).font(.title3).tint(PalTheme.accentOnInk).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(PalTheme.onInk).background(PalTheme.ink, in: RoundedRectangle(cornerRadius: 20)) }
+            if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(PalTheme.error).frame(minHeight: 44) }
         } }
     }
     private var composer: some View {
         VStack(spacing: 8) {
             PalTypingLane(visible: !typingExpired && store.isPalTyping(in: group.id), animated: phase == .active)
                 .padding(.horizontal, 18)
-
-            if let pollingError { Text(pollingError).font(.caption).foregroundStyle(.red) }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    if group.isDirect {
+                        quickAction("Summary", emoji: "💬", prompt: "@Pal, summarize recent conversations across all my current groups, including anything I need to respond to.")
+                        quickAction("Plans", emoji: "📅", prompt: "@Pal, list recent and upcoming plans across all my current groups. Show which are proposed, confirmed or cancelled, and my attendance.")
+                    } else {
+                        quickAction("Plans", emoji: "📅", prompt: "@Pal, show our recent plans and what still needs a response.")
+                        quickAction("Schedule", emoji: "🕒", prompt: "@Pal, show everyone's shared availability and upcoming group schedule. Keep unanswered availability visibly unknown.")
+                        quickAction("Hangout", emoji: "🍜", prompt: "@Pal, suggest two or three food spots or hangout ideas based on our recent chats and saved places.")
+                    }
+                }.padding(.horizontal, 15)
+            }.frame(height: 44)
+            if let pollingError { HStack { Text(messages.isEmpty ? "Couldn’t load messages." : "Updates paused. Your messages are still here.").font(.caption).foregroundStyle(.secondary); Button("Retry") { Task { await refresh() } }.font(.caption.weight(.semibold)) }.padding(.horizontal, 16).accessibilityHint(pollingError) }
             if let reply { HStack { Text("Reply to \(memberName(reply)): \(reply.body)").font(.caption).lineLimit(1); Spacer(); Button { self.reply = nil } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Cancel reply").frame(minWidth: 44, minHeight: 44) }.padding(.horizontal, 15) }
+            if let query = PalMentions.query(in: draft) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        if "pal".hasPrefix(query.lowercased()) { mentionButton(name: "Pal", mention: MessageMention(type: "pal"), url: nil) }
+                        ForEach(state.members.filter { $0.userID != store.userID && ($0.displayName ?? "Member").localizedCaseInsensitiveContains(query) }) { member in
+                            mentionButton(name: member.displayName ?? "Member", mention: MessageMention(type: "user", userID: member.userID), url: member.avatarURL)
+                        }
+                    }.padding(.horizontal, 16)
+                }.frame(height: 44)
+            }
             if let attachment { DraftMediaPreview(draft: attachment, onRemove: removeAttachment).padding(.horizontal, 15) }
             if processingPhoto { ProgressView("Preparing photo…").font(.caption) }
             HStack(alignment: .bottom, spacing: 10) {
@@ -327,6 +426,29 @@ struct ChatView: View {
                 PalSendButton(disabled: processingPhoto || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachment == nil), action: sendDraft)
             }.padding(.horizontal, 15).padding(.bottom, 10)
         }
+    }
+    private func quickAction(_ title: String, emoji: String, prompt: String) -> some View {
+        Button {
+            Task { await store.queue(prompt, group: group, replyTo: nil, mentions: [MessageMention(type: "pal")]) }
+        } label: {
+            HStack(spacing: 6) {
+                Text(emoji).accessibilityHidden(true)
+                Text(title).font(.subheadline.weight(.medium))
+            }.padding(.horizontal, 14).frame(minHeight: 44)
+                .foregroundStyle(.primary).modifier(PalGlass(cornerRadius: 22))
+        }.buttonStyle(.plain).accessibilityLabel(title).accessibilityHint("Ask Pal. Your current draft stays here.")
+    }
+
+    private func mentionButton(name: String, mention: MessageMention, url: String?) -> some View {
+        Button {
+            draft = PalMentions.inserting(name: name, into: draft)
+            selectedMentions[mention] = name
+        } label: {
+            HStack(spacing: 6) {
+                if mention.type == "pal" { PalMascotAvatar(size: 24) } else { AvatarView(name: name, url: url, size: 24) }
+                Text(name).font(.subheadline.weight(.medium))
+            }.padding(.horizontal, 10).frame(minHeight: 44).background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+        }.buttonStyle(.plain).disabled(PalMentions.retained(selectedMentions, in: draft).count >= 8 && selectedMentions[mention] == nil).accessibilityLabel("Mention " + name)
     }
     private func preparePhoto(_ data: Data) async {
         let preparationID = UUID()
@@ -357,18 +479,41 @@ struct ChatView: View {
         } else { HStack(alignment: .bottom, spacing: 7) {
             if mine { Spacer(minLength: 44) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
-                if !mine && (showSender || message.role == "pal") { HStack(spacing: 6) { if message.role == "pal" { PalMascotAvatar(emotion: message.emotion, animated: phase == .active, size: 32).accessibilityHidden(true) } else { AvatarView(name: memberName(message), url: state.members.first { $0.userID == message.senderID }?.avatarURL, size: 32).accessibilityHidden(true) }; Text(memberName(message)).font(.body.weight(.medium)).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5) }
-                if let replyID = message.replyToID, let original = messages.first(where: { $0.id == replyID }) { Text("\(memberName(original)): \(original.body)").font(.caption).lineLimit(2).foregroundStyle(.secondary).padding(8).background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10)) }
+                if !mine && (showSender || message.role == "pal") {
+                    if message.role == "pal" {
+                        HStack(spacing: 7) { PalMascotAvatar(emotion: message.emotion, animated: phase == .active, size: 36); Text("Pal").font(.body.weight(.medium)).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5)
+                    } else if let member = state.members.first(where: { $0.userID == message.senderID }) {
+                        NavigationLink { MemberDetailView(groupID: group.id, member: member) } label: {
+                            HStack(spacing: 7) { AvatarView(name: memberName(message), url: member.avatarURL, size: 36); Text(memberName(message)).font(.body.weight(.medium)).foregroundStyle(.secondary) }.padding(.horizontal, 4).padding(.top, 5)
+                        }.buttonStyle(.plain).accessibilityLabel("About " + memberName(message))
+                    }
+                }
+                if let replyID = message.replyToID {
+                    let original = messages.first { $0.id == replyID }
+                    replyPreview(name: original.map(memberName) ?? (message.reply?.role == "pal" ? "Pal" : state.members.first { $0.userID == message.reply?.senderID }?.displayName ?? "Message"), body: original?.body ?? message.reply?.body ?? "Earlier message") { scrollToReply = original?.timelineID ?? replyID }
+                }
                 if let body = message.plainBody(in: state) {
-                    Text(PalText.linked(body, markdown: message.role == "pal")).font(.title3).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+                    Text(PalText.linked(body, markdown: message.role == "pal", mentions: message.mentions, members: state.members)).font(.title3).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                         .contextMenu { messageMenu(message, mine: mine) }
                 }
+                ForEach(message.cards.filter { ["plan", "rsvp", "options", "choice", "availability"].contains($0.type) }) { card in PalCardView(group: group, card: card) }
                 ForEach(message.attachments) { media in MessageAttachmentView(attachment: media, onRetry: { Task { await refresh() } }).contextMenu { messageMenu(message, mine: mine) } }
                 let reactions = state.reactions.filter { $0.messageID == message.id }
                 if !reactions.isEmpty { HStack(spacing: 4) { ForEach(Array(Set(reactions.map(\.emoji))).sorted(), id: \.self) { emoji in let count = reactions.filter { $0.emoji == emoji }.count; let selected = reactions.contains { $0.emoji == emoji && $0.userID == store.userID }; Button { react(emoji, to: message) } label: { Text("\(emoji) \(count)").font(.caption).padding(.horizontal, 9).padding(.vertical, 5).background(selected ? PalTheme.ink.opacity(0.12) : Color(uiColor: .tertiarySystemFill), in: Capsule()) }.buttonStyle(.plain).frame(minHeight: 44).accessibilityLabel("\(emoji), \(count) reactions").accessibilityValue(selected ? "You reacted" : "").accessibilityHint(selected ? "Remove your reaction" : "Add your reaction") } } }
             }
             if !mine { Spacer(minLength: 28) }
         } }
+    }
+    private func replyPreview(name: String, body: String, onTap: @escaping () -> Void) -> some View {
+        Button(action: onTap) {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 2).fill(PalTheme.accent).frame(width: 3)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(name).font(.caption.weight(.semibold))
+                    Text(body).font(.subheadline).lineLimit(2)
+                }
+            }.foregroundStyle(.secondary).padding(10).background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        }.buttonStyle(.plain).accessibilityLabel("View replied message")
     }
     @ViewBuilder private func messageMenu(_ message: ChatMessage, mine: Bool) -> some View {
         ControlGroup { ForEach(["❤️", "👍", "😂", "👀"], id: \.self) { emoji in Button { react(emoji, to: message) } label: { Text(emoji) }.accessibilityLabel("React \(emoji)") } }.controlGroupStyle(.palette)
@@ -379,15 +524,17 @@ struct ChatView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !processingPhoto, !text.isEmpty || attachment != nil else { return }
         let media = attachment, replyID = reply?.id
-        draft = ""; reply = nil; attachment = nil; selectedPhoto = nil
-        Task { await store.queue(text, group: group, replyTo: replyID, attachment: media); await refresh() }
+        let mentions = PalMentions.retained(selectedMentions, in: text)
+        draft = ""; reply = nil; attachment = nil; selectedPhoto = nil; selectedMentions = [:]
+        Task { await store.queue(text, group: group, replyTo: replyID, attachment: media, mentions: mentions); await refresh() }
     }
     private func react(_ emoji: String, to message: ChatMessage) { Task { do { try await store.mutate(group, action: "reaction.toggle", data: ["message_id": .string(message.id.uuidString), "emoji": .string(emoji)]) } catch { store.report(error) } } }
     private func refresh() async {
         do {
-            let loaded = try await store.messages(in: group)
+            async let history = store.messages(in: group)
+            async let details: Void = store.loadState(group)
+            let (loaded, _) = try await (history, details)
             try Task.checkCancellation()
-            try await store.loadState(group)
             if let id = loaded.last?.id, lastRead != id, phase == .active {
                 try await store.mutate(group, action: "group.read", data: ["message_id": .string(id.uuidString)])
                 lastRead = id

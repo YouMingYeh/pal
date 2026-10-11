@@ -10,9 +10,18 @@ final class PalStore: ObservableObject {
     @Published var notice: String?
     @Published var pushRegistrationIssue: String?
     @Published private(set) var states: [UUID: GroupState] = [:]
+    @Published var memberSummaries: [String: MemberSummary] = [:]
     @Published private(set) var typingHints: [UUID: PalTypingHint] = [:]
     @Published private(set) var cachedMessages: [UUID: [ChatMessage]] = [:]
     @Published private(set) var profile: PalProfile?
+    @Published private(set) var groupsFetch = PalFetchState()
+    @Published private(set) var profileFetch = PalFetchState()
+    @Published private(set) var messageFetch: [UUID: PalFetchState] = [:]
+    @Published private(set) var stateFetch: [UUID: PalFetchState] = [:]
+    @Published private(set) var cachedCalendarStatus: CalendarStatus?
+    private var calendarFetchedAt: Date?
+    private let reads = PalFetchPool()
+    private var accountGeneration = UUID()
     @Published var path: [UUID] = []
     @Published var requestedEntity: MessageCard?
     @Published var pendingInvite = UserDefaults.standard.string(forKey: "PendingPalInvite")
@@ -20,6 +29,7 @@ final class PalStore: ObservableObject {
 
     private var pendingNotification: [AnyHashable: Any]? = UserDefaults.standard.dictionary(forKey: "PalPendingNotification")
     private var refreshTask: Task<StoredSession, Error>?
+    private var refreshTaskID: UUID?
     private var registeredDeviceKeys = Set<String>()
     private var messageCache = PalMessageCache()
     private var stateRequests: [UUID: Int] = [:]
@@ -29,6 +39,8 @@ final class PalStore: ObservableObject {
     private let realtime = PalRealtime()
     private var warmupTask: Task<Void, Never>?
     private var warmupID: UUID?
+
+    init() { PalImageCache.shared.setOwner(storedSession?.session.user.id) }
 
     var userID: UUID? { storedSession?.session.user.id }
     var isSignedIn: Bool { storedSession != nil }
@@ -88,7 +100,7 @@ final class PalStore: ObservableObject {
         }
         let value = StoredSession(try JSONDecoder().decode(AuthSession.self, from: data))
         try SessionKeychain.save(value)
-        storedSession = value
+        applySession(value)
         notice = nil
     }
 
@@ -101,7 +113,7 @@ final class PalStore: ObservableObject {
                                      method: "POST", body: ["provider": "apple", "id_token": token, "nonce": nonce], auth: true)
         let value = StoredSession(try JSONDecoder().decode(AuthSession.self, from: data))
         try SessionKeychain.save(value)
-        storedSession = value
+        applySession(value)
         notice = nil
     }
 
@@ -120,25 +132,56 @@ final class PalStore: ObservableObject {
             return shared.session.accessToken
         }
         if let refreshTask { return try await refreshTask.value.session.accessToken }
+        let generation = accountGeneration, taskID = UUID()
         let task = Task { () throws -> StoredSession in
             let data = try await request(base: configuredURL("SupabaseURL"), path: "/auth/v1/token?grant_type=refresh_token",
                                          method: "POST", body: ["refresh_token": storedSession.session.refreshToken], auth: true)
             let refreshed = StoredSession(try JSONDecoder().decode(AuthSession.self, from: data))
             try Task.checkCancellation()
+            guard userID == storedSession.session.user.id, accountGeneration == generation else { throw CancellationError() }
             try SessionKeychain.save(refreshed)
             self.storedSession = refreshed
             return refreshed
         }
         refreshTask = task
-        defer { refreshTask = nil }
+        refreshTaskID = taskID
+        defer { if refreshTaskID == taskID { refreshTask = nil; refreshTaskID = nil } }
         return try await task.value.session.accessToken
     }
 
     func api(_ path: String, method: String = "GET", body: [String: String]? = nil, json: [String: JSONValue]? = nil) async throws -> Data {
-        let owner = userID
-        let data = try await request(base: configuredURL("PalAPIURL"), path: path, method: method, body: body, token: token(), json: json)
-        guard userID == owner else { throw CancellationError() }
+        let owner = userID, generation = accountGeneration
+        let operation = { [self] in
+            let authorization = try await token()
+            guard userID == owner, accountGeneration == generation else { throw CancellationError() }
+            let data = try await request(base: configuredURL("PalAPIURL"), path: path, method: method, body: body, token: authorization, json: json)
+            guard userID == owner, accountGeneration == generation else { throw CancellationError() }
+            return data
+        }
+        let data: Data
+        if method == "GET" { data = try await reads.value(for: (owner?.uuidString ?? "") + path, operation: operation) }
+        else { data = try await operation(); invalidateReads(after: path, json: json) }
+        try Task.checkCancellation()
+        guard userID == owner, accountGeneration == generation else { throw CancellationError() }
         return data
+    }
+
+    private func invalidateReads(after path: String, json: [String: JSONValue]? = nil) {
+        let parts = path.split(separator: "/")
+        if parts.count >= 3, parts[0] == "api", parts[1] == "groups", UUID(uuidString: String(parts[2])) != nil {
+            let base = "/api/groups/" + String(parts[2])
+            if case .string("group.read")? = json?["action"] {
+                reads.invalidate { $0.hasSuffix("/api/groups") || $0.hasSuffix(base + "/state") }
+            } else {
+                reads.invalidate { $0.hasSuffix("/api/groups") || $0.contains(base + "/") }
+            }
+        } else if path.hasPrefix("/api/profile") {
+            reads.invalidate { $0.hasSuffix("/api/profile") || $0.hasSuffix("/api/groups") || $0.hasSuffix("/state") }
+        } else if path.hasPrefix("/api/calendar") {
+            reads.invalidate { $0.hasSuffix("/api/calendar/status") }
+        } else if path.hasPrefix("/api/groups") {
+            reads.invalidate { $0.hasSuffix("/api/groups") }
+        }
     }
 
     func report(_ error: Error) {
@@ -147,11 +190,14 @@ final class PalStore: ObservableObject {
     }
 
     func loadGroups() async throws {
+        let generation = accountGeneration
+        groupsFetch.begin()
+        do {
         groupRequest += 1
         let sequence = groupRequest
         struct Response: Decodable { let groups: [ChatGroup] }
         var loaded = try JSONDecoder().decode(Response.self, from: await api("/api/groups")).groups
-        guard sequence >= appliedGroupRequest else { return }
+        guard sequence >= appliedGroupRequest else { groupsFetch.finish(); return }
         appliedGroupRequest = sequence
         let changed = loaded.filter { messageCache.needsRefresh(groupID: $0.id, latestMessageID: $0.lastMessage?.id) }
         for index in loaded.indices {
@@ -165,9 +211,16 @@ final class PalStore: ObservableObject {
         messageCache.prune(groupIDs: allowed)
         cachedMessages = messageCache.messages
         states = states.filter { allowed.contains($0.key) }
+        memberSummaries = memberSummaries.filter { entry in
+            entry.key.split(separator: "/").first.flatMap { UUID(uuidString: String($0)) }.map { allowed.contains($0) } == true
+        }
+        stateFetch = stateFetch.filter { allowed.contains($0.key) }
+        messageFetch = messageFetch.filter { allowed.contains($0.key) }
         typingHints = typingHints.filter { allowed.contains($0.key) }
         if let open = path.last, !allowed.contains(open) { path = []; requestedEntity = nil }
-        warmHistory(changed)
+        warmHistory(loaded.filter { group in states[group.id] == nil || changed.contains(where: { $0.id == group.id }) })
+        groupsFetch.finish()
+        } catch { if accountGeneration == generation { groupsFetch.fail(error) }; throw error }
     }
 
     func createGroup(name: String, avatarData: Data? = nil, clientID: UUID = UUID()) async throws {
@@ -195,16 +248,18 @@ final class PalStore: ObservableObject {
         body.append(file); body.append(Data("\r\n--\(boundary)--\r\n".utf8))
         let data = try await request(base: configuredURL("PalAPIURL"), path: path, method: "POST", token: token(), rawBody: body, contentType: "multipart/form-data; boundary=\(boundary)")
         guard userID == owner else { throw CancellationError() }
+        invalidateReads(after: path)
         return data
     }
 
     @discardableResult
-    func sendAttachment(_ attachment: DraftAttachment, body: String, to group: ChatGroup, clientID: UUID, replyTo: UUID?) async throws -> ChatMessage {
+    func sendAttachment(_ attachment: DraftAttachment, body: String, to group: ChatGroup, clientID: UUID, replyTo: UUID?, mentions: [MessageMention] = []) async throws -> ChatMessage {
         let file = try Data(contentsOf: AttachmentFiles.url(for: attachment))
         guard file.count == attachment.byteSize, file.count > 0,
               file.count <= (attachment.kind == "image" ? 2 : 4) * 1024 * 1024 else { throw PalFailure(message: "This attachment is unavailable. Please select it again.") }
         var fields = ["body": body, "client_id": clientID.uuidString, "kind": attachment.kind]
         if let replyTo { fields["reply_to_id"] = replyTo.uuidString }
+        if !mentions.isEmpty { fields["mentions"] = String(decoding: try JSONEncoder().encode(mentions), as: UTF8.self) }
         let data = try await multipart(path: "/api/groups/\(group.id)/attachments", fields: fields, file: file, filename: attachment.filename, mimeType: attachment.mimeType)
         struct Response: Decodable { let message: ChatMessage }
         let message = try JSONDecoder().decode(Response.self, from: data).message
@@ -227,43 +282,76 @@ final class PalStore: ObservableObject {
     }
 
     func messages(in group: ChatGroup) async throws -> [ChatMessage] {
+        let generation = accountGeneration
+        messageFetch[group.id, default: PalFetchState()].begin()
+        do {
         let sequence = messageCache.beginFetch(groupID: group.id)
         struct Response: Decodable { let messages: [ChatMessage] }
         let loaded = try JSONDecoder().decode(Response.self, from: await api("/api/groups/\(group.id)/messages")).messages
         let merged = messageCache.acceptSnapshot(loaded, groupID: group.id, sequence: sequence)
         cachedMessages = messageCache.messages
         reconcileOutgoing(with: merged)
+        messageFetch[group.id, default: PalFetchState()].finish()
         return merged
+        } catch { if accountGeneration == generation { messageFetch[group.id, default: PalFetchState()].fail(error) }; throw error }
     }
 
     @discardableResult
-    func send(_ body: String, to group: ChatGroup, clientID: UUID, replyTo: UUID? = nil) async throws -> ChatMessage {
+    func send(_ body: String, to group: ChatGroup, clientID: UUID, replyTo: UUID? = nil, mentions: [MessageMention] = []) async throws -> ChatMessage {
         struct Response: Decodable { let message: ChatMessage }
-        var payload = ["body": body, "client_id": clientID.uuidString]
-        if let replyTo { payload["reply_to_id"] = replyTo.uuidString }
-        let message = try JSONDecoder().decode(Response.self, from: await api("/api/groups/\(group.id)/messages", method: "POST", body: payload)).message
+        var payload: [String: JSONValue] = ["body": .string(body), "client_id": .string(clientID.uuidString)]
+        if let replyTo { payload["reply_to_id"] = .string(replyTo.uuidString) }
+        if !mentions.isEmpty { payload["mentions"] = .array(mentions.map { mention in
+            var item: [String: JSONValue] = ["type": .string(mention.type)]
+            if let userID = mention.userID { item["user_id"] = .string(userID.uuidString) }
+            return .object(item)
+        }) }
+        let message = try JSONDecoder().decode(Response.self, from: await api("/api/groups/\(group.id)/messages", method: "POST", json: payload)).message
         acknowledge(message)
         return message
     }
 
     func loadState(_ group: ChatGroup) async throws {
+        let generation = accountGeneration
+        stateFetch[group.id, default: PalFetchState()].begin()
+        do {
         let sequence = (stateRequests[group.id] ?? 0) + 1
         stateRequests[group.id] = sequence
         let loaded = try JSONDecoder().decode(GroupState.self, from: await api("/api/groups/\(group.id)/state"))
-        guard sequence >= (appliedStateRequests[group.id] ?? 0) else { return }
+        guard sequence >= (appliedStateRequests[group.id] ?? 0) else { stateFetch[group.id, default: PalFetchState()].finish(); return }
         appliedStateRequests[group.id] = sequence
         states[group.id] = loaded
+        let memberKeys = Set(loaded.members.map { MemberSummary.key(groupID: group.id, userID: $0.userID) })
+        memberSummaries = memberSummaries.filter { !$0.key.hasPrefix(group.id.uuidString + "/") || memberKeys.contains($0.key) }
         if typingHints[group.id]?.acceptsState(sequence: sequence) == true { typingHints[group.id] = nil }
+        stateFetch[group.id, default: PalFetchState()].finish()
+        } catch { if accountGeneration == generation { stateFetch[group.id, default: PalFetchState()].fail(error) }; throw error }
     }
 
     func mutate(_ group: ChatGroup, action: String, data: [String: JSONValue]) async throws {
-        _ = try await api("/api/groups/\(group.id)/state", method: "POST", json: ["action": .string(action), "data": .object(data)])
+        let response = try await api("/api/groups/\(group.id)/state", method: "POST", json: ["action": .string(action), "data": .object(data)])
+        if action == "group.read" {
+            if let index = groups.firstIndex(where: { $0.id == group.id }) { groups[index].unreadCount = 0 }
+            if case .string(let value)? = data["message_id"], let messageID = UUID(uuidString: value),
+               let receipt = try? JSONDecoder().decode(PalReadReceipt.self, from: response),
+               var state = states[group.id], let member = state.members.firstIndex(where: { $0.userID == userID }) {
+                let createdAt = cachedMessages[group.id]?.first { $0.id == messageID }?.createdAt
+                receipt.apply(to: &state.members[member], messageID: messageID, targetCreatedAt: createdAt)
+                states[group.id] = state
+            }
+            return
+        }
         try await loadState(group)
     }
 
     func loadProfile() async throws {
-        struct Response: Decodable { let profile: PalProfile }
-        profile = try JSONDecoder().decode(Response.self, from: await api("/api/profile")).profile
+        let generation = accountGeneration
+        profileFetch.begin()
+        do {
+            struct Response: Decodable { let profile: PalProfile }
+            profile = try JSONDecoder().decode(Response.self, from: await api("/api/profile")).profile
+            profileFetch.finish()
+        } catch { if accountGeneration == generation { profileFetch.fail(error) }; throw error }
     }
 
     func saveProfile(name: String, avatarURL: String?, notifications: Bool) async throws {
@@ -292,6 +380,7 @@ final class PalStore: ObservableObject {
         guard userID == owner else { throw CancellationError() }
         struct Response: Decodable { let profile: PalProfile }
         profile = try JSONDecoder().decode(Response.self, from: response).profile
+        invalidateReads(after: "/api/profile/avatar")
     }
 
     func registerDevice(token: String) async throws {
@@ -315,14 +404,20 @@ final class PalStore: ObservableObject {
         if let owner { registeredDeviceKeys.remove(owner.uuidString + ":" + environment + ":" + token) }
     }
 
-    func calendarStatus() async throws -> CalendarStatus {
-        try JSONDecoder().decode(CalendarStatus.self, from: await api("/api/calendar/status"))
+    func calendarStatus(force: Bool = false) async throws -> CalendarStatus {
+        if !force, let status = cachedCalendarStatus, let date = calendarFetchedAt, Date().timeIntervalSince(date) < 30 { return status }
+        let value = try JSONDecoder().decode(CalendarStatus.self, from: await api("/api/calendar/status"))
+        cachedCalendarStatus = value; calendarFetchedAt = Date()
+        return value
     }
     func calendarConnectURL() async throws -> URL {
         struct Response: Decodable { let url: URL }
         return try JSONDecoder().decode(Response.self, from: await api("/api/calendar/connect")).url
     }
-    func disconnectCalendar() async throws { _ = try await api("/api/calendar/disconnect", method: "DELETE") }
+    func disconnectCalendar() async throws {
+        _ = try await api("/api/calendar/disconnect", method: "DELETE")
+        cachedCalendarStatus = nil; calendarFetchedAt = nil
+    }
 
     static func inviteCode(from url: URL) -> String? {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
@@ -403,15 +498,32 @@ final class PalStore: ObservableObject {
         signOut()
     }
 
+    private func applySession(_ value: StoredSession) {
+        if userID != value.session.user.id { clearReadCache() }
+        storedSession = value
+        PalImageCache.shared.setOwner(value.session.user.id)
+    }
+
+    private func clearReadCache() {
+        accountGeneration = UUID()
+        reads.clear()
+        refreshTask?.cancel(); refreshTask = nil; refreshTaskID = nil
+        warmupID = nil; warmupTask?.cancel(); warmupTask = nil
+        groups = []; states = [:]; memberSummaries = [:]; messageCache.clear(); cachedMessages = [:]; typingHints = [:]
+        groupsFetch = PalFetchState(); profileFetch = PalFetchState(); stateFetch = [:]; messageFetch = [:]
+        profile = nil; cachedCalendarStatus = nil; calendarFetchedAt = nil
+        path = []; requestedEntity = nil
+    }
+
     private static func restoreOutgoing() -> [OutgoingMessage] {
         guard let data = UserDefaults.standard.data(forKey: "PalOutbox"), let values = try? JSONDecoder().decode([OutgoingMessage].self, from: data) else { return [] }
         return values.map { var copy = $0; copy.failed = true; return copy }
     }
     private func persistOutgoing() { UserDefaults.standard.set(try? JSONEncoder().encode(outgoing), forKey: "PalOutbox") }
 
-    func queue(_ body: String, group: ChatGroup, replyTo: UUID?, attachment: DraftAttachment? = nil) async {
+    func queue(_ body: String, group: ChatGroup, replyTo: UUID?, attachment: DraftAttachment? = nil, mentions: [MessageMention] = []) async {
         guard let userID else { return }
-        let item = OutgoingMessage(groupID: group.id, userID: userID, clientID: UUID(), body: body, replyToID: replyTo, failed: false, attachment: attachment, createdAt: PalDate.iso(Date()))
+        let item = OutgoingMessage(groupID: group.id, userID: userID, clientID: UUID(), body: body, replyToID: replyTo, failed: false, attachment: attachment, createdAt: PalDate.iso(Date()), mentions: mentions)
         outgoing.append(item)
         persistOutgoing()
         await retry(item, group: group)
@@ -423,9 +535,9 @@ final class PalStore: ObservableObject {
         persistOutgoing()
         do {
             if let attachment = item.attachment {
-                _ = try await sendAttachment(attachment, body: item.body, to: group, clientID: item.clientID, replyTo: item.replyToID)
+                _ = try await sendAttachment(attachment, body: item.body, to: group, clientID: item.clientID, replyTo: item.replyToID, mentions: item.mentions ?? [])
                 try? AttachmentFiles.remove(attachment)
-            } else { _ = try await send(item.body, to: group, clientID: item.clientID, replyTo: item.replyToID) }
+            } else { _ = try await send(item.body, to: group, clientID: item.clientID, replyTo: item.replyToID, mentions: item.mentions ?? []) }
             outgoing.removeAll { $0.clientID == item.clientID }
         } catch {
             if typingHints[group.id]?.clientID == item.clientID { typingHints[group.id] = nil }
@@ -444,6 +556,8 @@ final class PalStore: ObservableObject {
     }
 
     func signOut() {
+        clearReadCache()
+        PalImageCache.shared.setOwner(nil)
         warmupID = nil
         warmupTask?.cancel()
         warmupTask = nil
@@ -454,6 +568,7 @@ final class PalStore: ObservableObject {
         storedSession = nil
         groups = []
         states = [:]
+        memberSummaries = [:]
         messageCache.clear()
         cachedMessages = [:]
         typingHints = [:]
@@ -478,7 +593,15 @@ final class PalStore: ObservableObject {
                 func add(_ group: ChatGroup) {
                     tasks.addTask { @MainActor [weak self] in
                         guard let self, self.userID == owner, !Task.isCancelled else { return }
-                        _ = try? await self.messages(in: group)
+                        async let history = self.messages(in: group)
+                        async let details: Void = self.loadState(group)
+                        _ = try? await history
+                        _ = try? await details
+                        guard self.userID == owner, !Task.isCancelled else { return }
+                        let photos = ([group.avatarURL] + (self.states[group.id]?.members ?? []).map(\.avatarURL)).compactMap { $0 }.compactMap(URL.init(string:))
+                        await withTaskGroup(of: Void.self) { images in
+                            for url in Set(photos) { images.addTask { @MainActor in _ = try? await PalImageCache.shared.image(url) } }
+                        }
                     }
                 }
                 for _ in 0..<2 { if let group = iterator.next() { add(group) } }

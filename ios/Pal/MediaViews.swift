@@ -105,21 +105,10 @@ struct MessageAttachmentView: View {
     var onRetry: (() -> Void)? = nil
     var body: some View {
         Group {
-            if let url = attachment.url {
-                if attachment.kind == "image" {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 280)
-                                .clipShape(RoundedRectangle(cornerRadius: 14)).accessibilityLabel("Shared photo")
-                        case .failure: unavailable
-                        case .empty: ProgressView("Loading photo…").frame(width: 160, height: 120)
-                        @unknown default: unavailable
-                        }
-                    }
-                } else if attachment.kind == "audio" {
-                    AudioPlaybackView(url: url, durationMS: attachment.durationMS, foreground: foreground, onRetry: onRetry).id(url)
-                } else { unavailable }
+            if attachment.kind == "image" {
+                MessagePhotoView(url: attachment.url, size: attachment.displaySize, onRetry: onRetry)
+            } else if let url = attachment.url, attachment.kind == "audio" {
+                AudioPlaybackView(url: url, durationMS: attachment.durationMS, foreground: foreground, onRetry: onRetry).id(attachment.id)
             } else { unavailable }
         }.foregroundStyle(foreground)
     }
@@ -131,32 +120,84 @@ struct MessageAttachmentView: View {
     }
 }
 
+private struct MessagePhotoView: View {
+    let url: URL?
+    let size: CGSize
+    var onRetry: (() -> Void)?
+    @State private var image: UIImage?
+    @State private var loadedKey: String?
+    @State private var failed = false
+    @State private var attempt = UUID()
+    var body: some View {
+        ZStack {
+            Color(uiColor: .tertiarySystemFill)
+            if let url, let photo = PalImageCache.shared.cached(url, maximumPixelSize: 1024) ?? (loadedKey == PalImageCache.key(for: url) ? image : nil) {
+                Image(uiImage: photo).resizable().scaledToFit().accessibilityLabel("Shared photo")
+            } else if failed || url == nil {
+                VStack(spacing: 8) {
+                    Label("Photo unavailable", systemImage: "exclamationmark.circle").font(.caption)
+                    Button("Try again") { attempt = UUID(); onRetry?() }.font(.caption)
+                }.padding(8)
+            } else { ProgressView("Loading photo…").font(.caption) }
+        }.frame(width: size.width, height: size.height)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .task(id: (url?.absoluteString ?? "") + attempt.uuidString) {
+                guard let url else { return }
+                failed = false
+                do {
+                    let photo = try await PalImageCache.shared.image(url, maximumPixelSize: 1024)
+                    try Task.checkCancellation()
+                    loadedKey = PalImageCache.key(for: url); image = photo
+                } catch { if !PalCancellation.isCancellation(error) { failed = true } }
+            }
+    }
+}
+
 @MainActor private final class AudioPlayback: ObservableObject {
     let player: AVPlayer
     @Published var requestedPlaying = false
     @Published var elapsed = 0.0
     @Published var issue: String?
+    private var sourceURL: URL
+    private var itemObservation: NSKeyValueObservation?
+    private var endNotification: NSObjectProtocol?
     private var timeObserver: Any?
-    private var observations: [NSKeyValueObservation] = []
     private var notifications: [NSObjectProtocol] = []
     init(url: URL) {
-        let item = AVPlayerItem(url: url)
-        player = AVPlayer(playerItem: item)
-        observations.append(item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
-            let failure = item.status == .failed ? (item.error?.localizedDescription ?? "Unable to play this voice message.") : nil
-            Task { @MainActor in if let failure { self?.issue = failure; self?.requestedPlaying = false } }
-        })
+        sourceURL = url
+        player = AVPlayer()
+        installItem(url: url)
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in if time.seconds.isFinite { self?.elapsed = max(0, time.seconds) } }
         }
-        notifications.append(NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.pause(); self?.player.seek(to: .zero) }
-        })
         notifications.append(NotificationCenter.default.addObserver(forName: .palPauseAudio, object: nil, queue: .main) { [weak self] notification in
             let source = notification.object as? AVPlayer
             Task { @MainActor in if source !== self?.player { self?.pause() } }
         })
     }
+    private func installItem(url: URL) {
+        itemObservation = nil
+        if let endNotification { NotificationCenter.default.removeObserver(endNotification) }
+        let item = AVPlayerItem(url: url)
+        player.replaceCurrentItem(with: item)
+        itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+            let failure = item.status == .failed ? (item.error?.localizedDescription ?? "Unable to play this voice message.") : nil
+            Task { @MainActor in
+                guard self?.player.currentItem === item else { return }
+                if let failure { self?.issue = failure; self?.requestedPlaying = false }
+            }
+        }
+        endNotification = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.pause(); self?.player.seek(to: .zero) }
+        }
+        if elapsed > 0 { player.seek(to: CMTime(seconds: elapsed, preferredTimescale: 600)) }
+    }
+    func refreshURL(_ url: URL) {
+        guard sourceURL != url else { return }
+        sourceURL = url
+        if !requestedPlaying { installItem(url: url); issue = nil }
+    }
+    func retry() { installItem(url: sourceURL); issue = nil }
     func toggle() {
         if requestedPlaying { pause(); return }
         guard player.currentItem?.status != .failed else {
@@ -172,21 +213,27 @@ struct MessageAttachmentView: View {
             player.play()
         } catch { issue = error.localizedDescription }
     }
-    func pause() { player.pause(); requestedPlaying = false }
+    func pause() {
+        player.pause(); requestedPlaying = false
+        if (player.currentItem?.asset as? AVURLAsset)?.url != sourceURL { installItem(url: sourceURL) }
+    }
     deinit {
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         for observer in notifications { NotificationCenter.default.removeObserver(observer) }
+        if let endNotification { NotificationCenter.default.removeObserver(endNotification) }
     }
 }
 
 @MainActor struct AudioPlaybackView: View {
     @StateObject private var playback: AudioPlayback
+    let url: URL
     let durationMS: Int?
     var foreground: Color
     var onRetry: (() -> Void)?
     init(url: URL, durationMS: Int? = nil, foreground: Color = PalTheme.ink, onRetry: (() -> Void)? = nil) {
         _playback = StateObject(wrappedValue: AudioPlayback(url: url))
+        self.url = url
         self.durationMS = durationMS
         self.foreground = foreground
         self.onRetry = onRetry
@@ -209,9 +256,10 @@ struct MessageAttachmentView: View {
             }
             if let issue = playback.issue {
                 Text(issue).font(.caption)
-                if let onRetry { Button("Try again", action: onRetry).font(.caption) }
+                Button("Try again") { playback.retry(); onRetry?() }.font(.caption)
             }
         }.foregroundStyle(foreground).onDisappear { playback.pause() }
+            .onChange(of: url) { _, value in playback.refreshURL(value) }
     }
     private static func time(_ seconds: Double) -> String {
         let value = Int(max(0, seconds.rounded(.down)))
@@ -346,7 +394,7 @@ struct AudioRecorderView: View {
                     Button("Record", systemImage: "mic.circle.fill") { Task { await recorder.start() } }.buttonStyle(.borderedProminent).tint(PalTheme.accent).foregroundStyle(PalTheme.onAccent)
                 }
                 if recorder.requesting || preparing { ProgressView(recorder.requesting ? "Checking microphone permission…" : "Preparing recording…") }
-                if let issue = recorder.issue { Text(issue).font(.footnote).foregroundStyle(.red) }
+                if let issue = recorder.issue { Text(issue).font(.footnote).foregroundStyle(PalTheme.error) }
                 if recorder.permissionDenied, let url = URL(string: UIApplication.openSettingsURLString) { Link("Open Settings", destination: url) }
             }.padding(24).disabled(preparing || recorder.requesting)
             .navigationTitle("Voice message").navigationBarTitleDisplayMode(.inline)
