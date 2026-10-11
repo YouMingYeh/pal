@@ -1,7 +1,27 @@
 import XCTest
+import SwiftUI
 @testable import Pal
 
 final class CalendarViewTests: XCTestCase {
+    @MainActor func testIdeaAndAgendaRowsExpandInBothAppearancesForAccessibleText() {
+        let title = "Coffee and a long catch-up with the weekend crew by the waterfront"
+        let idea = HangoutIdea(id: "coffee", title: title, subtitle: "San Francisco · Espresso and pastries", place: nil, sources: [])
+        for appearance in [ColorScheme.light, .dark] {
+            let normal = UIHostingController(rootView: VStack { HangoutIdeaRow(idea: idea); CalendarAgendaLabel(title: title, detail: "Friday, October 16 at 7:30 PM", emoji: "📅") }.environment(\.colorScheme, appearance).environment(\.dynamicTypeSize, .large))
+            let accessible = UIHostingController(rootView: VStack { HangoutIdeaRow(idea: idea); CalendarAgendaLabel(title: title, detail: "Friday, October 16 at 7:30 PM", emoji: "📅") }.environment(\.colorScheme, appearance).environment(\.dynamicTypeSize, .accessibility3))
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 1000))
+            window.rootViewController = accessible
+            window.isHidden = false
+            accessible.view.layoutIfNeeded()
+            let bounds = CGSize(width: 320, height: 1000)
+            let normalSize = normal.sizeThatFits(in: bounds), accessibleSize = accessible.sizeThatFits(in: bounds)
+            XCTAssertGreaterThan(accessibleSize.height, normalSize.height, "Long titles wrap instead of being clipped when text grows.")
+            XCTAssertLessThanOrEqual(accessibleSize.width, bounds.width + 1)
+            window.isHidden = true
+        }
+        XCTAssertEqual(idea.emoji, "☕️")
+    }
+
     private func calendar(firstWeekday: Int = 1) -> Calendar {
         var value = Calendar(identifier: .gregorian)
         value.timeZone = TimeZone(identifier: "America/Los_Angeles")!

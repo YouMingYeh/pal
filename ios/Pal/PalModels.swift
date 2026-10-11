@@ -42,7 +42,8 @@ struct ChatGroup: Codable, Identifiable, Hashable {
     var lastMessage: GroupLastMessage?
     var avatarURL: String?
     let isDirect: Bool
-    enum CodingKeys: String, CodingKey { case id, name; case inviteCode = "invite_code", unreadCount = "unread_count", lastMessage = "last_message", avatarURL = "avatar_url", isDirect = "is_direct" }
+    let isDemo: Bool
+    enum CodingKeys: String, CodingKey { case id, name; case inviteCode = "invite_code", unreadCount = "unread_count", lastMessage = "last_message", avatarURL = "avatar_url", isDirect = "is_direct", isDemo = "is_demo" }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -52,6 +53,7 @@ struct ChatGroup: Codable, Identifiable, Hashable {
         lastMessage = try c.decodeIfPresent(GroupLastMessage.self, forKey: .lastMessage)
         avatarURL = try c.decodeIfPresent(String.self, forKey: .avatarURL)
         isDirect = try c.decodeIfPresent(Bool.self, forKey: .isDirect) ?? false
+        isDemo = try c.decodeIfPresent(Bool.self, forKey: .isDemo) ?? false
     }
 }
 struct GroupLastMessage: Codable, Hashable {
@@ -442,11 +444,37 @@ struct GroupState: Decodable, Equatable {
     var settings: GroupSettings?
     var palActivity: PalWorkActivity? = nil
     var locations: [GroupMemberLocation] = []
+    var demo: DemoState? = nil
     enum CodingKeys: String, CodingKey {
-        case members, places, sources, polls, plans, memories, reminders, reactions, settings, locations
+        case members, places, sources, polls, plans, memories, reminders, reactions, settings, locations, demo
         case palActivity = "pal_activity"
     }
     static var empty: GroupState { GroupState(members: [], places: [], sources: [], polls: [], plans: [], memories: [], reminders: [], reactions: [], settings: nil) }
+}
+
+struct DemoState: Decodable, Equatable {
+    enum Status: String, Decodable { case ready, actors, pal, failed }
+    let generation: UUID
+    let step: Int
+    let total: Int
+    let runID: UUID?
+    let startsAt: String
+    let status: Status
+    let nextPrompt: String?
+    var sceneID: String { generation.uuidString + ":" + String(step) }
+    var dateExpired: Bool { startsAt.isEmpty || PalDate.date(startsAt).map { $0 <= Date() } != false }
+    var canAdvance: Bool { !dateExpired && status == .ready && step < total && nextPrompt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+    enum CodingKeys: String, CodingKey { case generation, step, total, status; case runID = "run_id", startsAt = "starts_at", nextPrompt = "next_prompt" }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        generation = try c.decode(UUID.self, forKey: .generation)
+        step = try c.decode(Int.self, forKey: .step); total = try c.decode(Int.self, forKey: .total)
+        guard total == 6, (0...total).contains(step) else { throw DecodingError.dataCorruptedError(forKey: .step, in: c, debugDescription: "Invalid demo scene.") }
+        runID = try c.decodeIfPresent(UUID.self, forKey: .runID)
+        startsAt = try c.decode(String.self, forKey: .startsAt)
+        status = try c.decode(Status.self, forKey: .status)
+        nextPrompt = try c.decodeIfPresent(String.self, forKey: .nextPrompt)
+    }
 }
 
 struct GroupMemberLocation: Decodable, Equatable, Identifiable {
@@ -483,6 +511,7 @@ extension GroupState {
         settings = try c.decodeIfPresent(GroupSettings.self, forKey: .settings)
         palActivity = try c.decodeIfPresent(PalWorkActivity.self, forKey: .palActivity)
         locations = try c.decodeIfPresent([GroupMemberLocation].self, forKey: .locations) ?? []
+        demo = try c.decodeIfPresent(DemoState.self, forKey: .demo)
     }
 }
 
@@ -534,6 +563,8 @@ struct OutgoingMessage: Codable, Identifiable, Equatable {
     var attachment: DraftAttachment?
     var createdAt: String? = nil
     var mentions: [MessageMention]? = nil
+    var demoStep: Int? = nil
+    var demoGeneration: UUID? = nil
     var id: UUID { clientID }
 }
 

@@ -1,6 +1,7 @@
 import XCTest
 import UIKit
 import SwiftUI
+import Vision
 @testable import Pal
 
 final class FetchTests: XCTestCase {
@@ -39,6 +40,102 @@ final class FetchTests: XCTestCase {
         XCTAssertGreaterThan(pixel[0], 200)
         XCTAssertLessThan(pixel[2], 80, "The actual mounted center must draw the orange photo, rather than the empty white placeholder.")
     }
+    @MainActor func testCachedConversationDrawsMessagesAndPalBeforeAnyScrollInteraction() async throws {
+        try await assertInitialConversationRendering(preload: true)
+    }
+
+    @MainActor func testFirstAsyncHistoryDrawsMessagesAndPalWithoutScrollInteraction() async throws {
+        try await assertInitialConversationRendering(preload: false)
+    }
+
+    @MainActor func testReadingOlderMessagesDoesNotJumpWhenNewHistoryArrives() async throws {
+        try await assertInitialConversationRendering(preload: true, checkReadingPosition: true)
+    }
+
+    @MainActor func testPushedConversationStaysAtLatestThroughLaterViewportLayout() async throws {
+        try await assertInitialConversationRendering(preload: true, pushed: true, resizeViewport: true)
+    }
+
+    @MainActor private func assertInitialConversationRendering(preload: Bool, checkReadingPosition: Bool = false, pushed: Bool = false, resizeViewport: Bool = false) async throws {
+        #if !targetEnvironment(simulator)
+        throw XCTSkip("This test uses a temporary authentication fixture only in the simulator.")
+        #else
+        let originalSession = SessionKeychain.load()
+        let account = UUID(), groupID = UUID()
+        let fixture = AuthSession(accessToken: "chat-render-fixture", refreshToken: "unused", expiresIn: 3600, expiresAt: nil, user: .init(id: account, email: "render@example.test"))
+        try SessionKeychain.save(StoredSession(fixture))
+        defer { SessionKeychain.clear(); if let originalSession { try? SessionKeychain.save(originalSession) } }
+        let group = try JSONDecoder().decode(ChatGroup.self, from: JSONSerialization.data(withJSONObject: ["id": groupID.uuidString, "name": "Render fixture", "is_direct": true]))
+        let messageJSON: [[String: Any]] = (0..<60).map { index in
+            ["id": UUID().uuidString, "group_id": groupID.uuidString, "role": "pal", "body": index == 59 ? "The latest message is visible before you touch the screen." : "A varied-length conversation message \(index). " + String(repeating: "We should get dinner together. ", count: index % 5), "emotion": "heureux", "created_at": ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1791750000 + Double(index) * 240))]
+        }
+        ChatRenderURLProtocol.prepare(try JSONSerialization.data(withJSONObject: ["messages": messageJSON]))
+        URLProtocol.registerClass(ChatRenderURLProtocol.self)
+        defer { URLProtocol.unregisterClass(ChatRenderURLProtocol.self) }
+        let store = PalStore()
+        if preload { _ = try await store.messages(in: group) }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = try XCTUnwrap(scene.windows.first(where: \.isKeyWindow))
+        let previous = window.rootViewController
+        let navigation = ChatRenderNavigation()
+        let host = UIHostingController(rootView: ChatRenderHost(group: group, navigation: navigation, pushed: pushed).environmentObject(store).environment(\.scenePhase, .inactive).preferredColorScheme(.light))
+        window.rootViewController = host
+        defer { window.rootViewController = previous }
+        window.layoutIfNeeded(); host.view.layoutIfNeeded()
+        if pushed { withAnimation { navigation.path = [group] } }
+        if !preload {
+            try await Task.sleep(for: .milliseconds(50))
+            _ = try await store.messages(in: group)
+        }
+        XCTAssertEqual(store.cachedMessages[groupID]?.count, 60)
+        try await Task.sleep(for: .milliseconds(pushed ? 500 : 150))
+        if resizeViewport {
+            // Navigation, keyboard, and composer insets can settle after the first row layout.
+            host.additionalSafeAreaInsets.bottom = 90
+            host.view.setNeedsLayout(); window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        let attachment = XCTAttachment(image: screenshot); attachment.lifetime = .keepAlways; add(attachment)
+        let textRequest = VNRecognizeTextRequest()
+        textRequest.recognitionLevel = .accurate
+        try VNImageRequestHandler(cgImage: XCTUnwrap(screenshot.cgImage)).perform([textRequest])
+        let visibleText = (textRequest.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ").lowercased()
+        XCTAssertTrue(visibleText.contains("latest message"), "Initial layout must show the latest cached message without scrolling. Actual visible text: \(visibleText)")
+        // Exclude the navigation-bar mascot and composer. The conversation itself must draw a Pal avatar and text.
+        let region = CGRect(x: 10, y: 130, width: window.bounds.width - 20, height: window.bounds.height - 330)
+        let crop = try XCTUnwrap(screenshot.cgImage?.cropping(to: region.applying(CGAffineTransform(scaleX: screenshot.scale, y: screenshot.scale))))
+        var pixels = [UInt8](repeating: 0, count: crop.width * crop.height * 4)
+        try pixels.withUnsafeMutableBytes { bytes in
+            let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: crop.width, height: crop.height, bitsPerComponent: 8, bytesPerRow: crop.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
+        }
+        let orange = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 210 && pixels[$0 + 1] > 65 && pixels[$0 + 1] < 175 && pixels[$0 + 2] < 70 }.count
+        let ink = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] < 80 && pixels[$0 + 1] < 80 && pixels[$0 + 2] < 80 }.count
+        XCTAssertGreaterThan(orange, 80, "The mounted cached transcript must draw a real Pal avatar before any scroll or tap.")
+        XCTAssertGreaterThan(ink, 80, "The mounted cached transcript must draw its message text before any scroll or tap.")
+        func scrollViews(in view: UIView) -> [UIScrollView] {
+            ((view as? UIScrollView).map { [$0] } ?? []) + view.subviews.flatMap { scrollViews(in: $0) }
+        }
+        let scroll = try XCTUnwrap(scrollViews(in: host.view).filter { $0.bounds.height > 250 }.max { $0.contentSize.height < $1.contentSize.height })
+        XCTAssertTrue([UIScrollView.KeyboardDismissMode.interactive, .interactiveWithAccessory].contains(scroll.keyboardDismissMode), "The mounted chat must preserve UIKit's native interactive swipe-to-dismiss keyboard behavior, including its input accessory.")
+        let bottomOffset = max(-scroll.adjustedContentInset.top, scroll.contentSize.height + scroll.adjustedContentInset.bottom - scroll.bounds.height)
+        XCTAssertEqual(scroll.contentOffset.y, bottomOffset, accuracy: 3, "Initial conversation must actually be at the latest message, including final lazy-row heights.")
+        if checkReadingPosition {
+            scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: false)
+            try await Task.sleep(for: .milliseconds(100))
+            let readingOffset = scroll.contentOffset.y
+            let incoming: [String: Any] = ["id": UUID().uuidString, "group_id": groupID.uuidString, "role": "pal", "body": "One more incoming message.", "created_at": "2026-10-12T23:00:00Z"]
+            ChatRenderURLProtocol.prepare(try JSONSerialization.data(withJSONObject: ["messages": messageJSON + [incoming]]))
+            _ = try await store.api("/api/groups/" + groupID.uuidString + "/state", method: "POST", json: [:])
+            _ = try await store.messages(in: group)
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertEqual(store.cachedMessages[groupID]?.count, 61)
+            XCTAssertEqual(scroll.contentOffset.y, readingOffset, accuracy: 2, "New history must preserve the user's position while reading older messages.")
+        }
+        #endif
+    }
+
     func testBackgroundFetchesDoNotChangeVisibleStateButKeepConcurrentRequestAccounting() {
         var tracked = PalFetchState()
         tracked.begin()
@@ -270,6 +367,40 @@ private final class AvatarURLProtocol: URLProtocol {
     override func startLoading() {
         Self.lock.lock(); let data = Self.responseData; Self.count += 1; Self.lock.unlock()
         guard let url = request.url, let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/jpeg"]) else { return }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+@MainActor private final class ChatRenderNavigation: ObservableObject {
+    @Published var path: [ChatGroup] = []
+}
+
+private struct ChatRenderHost: View {
+    let group: ChatGroup
+    @ObservedObject var navigation: ChatRenderNavigation
+    let pushed: Bool
+    var body: some View {
+        NavigationStack(path: $navigation.path) {
+            Group {
+                if pushed { Text("Fixture inbox") }
+                else { ChatView(group: group) }
+            }.navigationDestination(for: ChatGroup.self) { ChatView(group: $0) }
+        }
+    }
+}
+
+private final class ChatRenderURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var history = Data()
+    static func prepare(_ data: Data) { lock.lock(); defer { lock.unlock() }; history = data }
+    override class func canInit(with request: URLRequest) -> Bool { request.value(forHTTPHeaderField: "Authorization") == "Bearer chat-render-fixture" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.lock(); let data = request.url?.path.hasSuffix("/messages") == true ? Self.history : Data("{}".utf8); Self.lock.unlock()
+        guard let url = request.url, let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else { return }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)

@@ -42,7 +42,7 @@ export function initialTurnInput(job: Pick<Job, "group_id" | "job_kind" | "expli
   batch: SourceMessage[], rawState: unknown, rawRecent: unknown, observedAt = new Date().toISOString()) {
   id.parse(job.group_id);
   const raw = row(rawState), omitted: Record<string, number> = {};
-  const state: Record<string, Row[] | Row> = { settings: pick(row(raw.settings), ["name", "timezone", "is_direct", "proactive_suggestions", "agent_paused"]) };
+  const state: Record<string, Row[] | Row> = { settings: pick(row(raw.settings), ["name", "timezone", "is_direct", "is_demo", "proactive_suggestions", "agent_paused"]) };
   const take = (key: string, limit: number, fields: string[], nested?: (item: Row, result: Row) => void) => {
     const records = list(raw[key]);
     const scoped = records.filter(item => key === "members" || same(item.group_id, job.group_id));

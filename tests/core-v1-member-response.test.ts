@@ -102,3 +102,70 @@ test("plain-text confirmation requires explicit current speaker intent for a fut
   assert.deepEqual(confirm("Confirm Dinner", multiple).response, { plan_version: 4 });
   assert.throws(() => prepareMemberResponse({ target_kind: "confirmation", target_id: planId, source_message_id: messageId, evidence: "Confirm Dinner", user_id: otherId }, [source("Confirm Dinner")], draftState, groupId, now));
 });
+
+const delfinaState: ResponseState = { ...planState,
+  places: [{ id: otherId, group_id: groupId, name: "Delfina" }],
+  plans: [{ ...planState.plans[0], title: "Friday dinner", place_id: otherId }],
+};
+function confirmNamed(body: string, groupState: ResponseState) {
+  return prepareMemberResponse({ target_kind: "confirmation", target_id: planId, source_message_id: messageId, evidence: body },
+    [source(body)], groupState, groupId, now);
+}
+
+test("natural confirmation matches one real venue and actual local date/time without claiming a booking", () => {
+  const draft = { ...delfinaState, plans: [{ ...delfinaState.plans[0], status: "draft" }] };
+  const body = "Confirm our Delfina dinner for Friday at 8 PM. Ask everyone to RSVP. The restaurant is not booked yet.";
+  const result = confirmNamed(body, draft);
+  assert.deepEqual(result.response, { plan_version: 4 });
+  assert.equal(result.source.body, body, "The entire authenticated source stays intact for the final SQL freshness/version guard.");
+  for (const wrong of [
+    "Confirm our Delfina dinner for Saturday at 8 PM.", "Confirm our Delfina dinner for Friday at 7:30 PM.",
+    "Confirm our Delfina dinner for next Friday at 8 PM.", "Confirm our Delfina dinner at 8 AM.",
+    "Confirm our Other Restaurant dinner for Friday at 8 PM.", "Confirm our Delfina lunch for Friday at 8 PM.",
+    "Confirm our Delfina dinner for Friday at 8 PM or at 9 PM.",
+  ]) assert.throws(() => confirmNamed(wrong, draft), /ambiguous/, wrong);
+  assert.throws(() => confirmNamed(body, { ...draft, places: [{ id: otherId, group_id: otherId, name: "Delfina" }] }), /ambiguous/);
+  assert.throws(() => confirmNamed("Confirm Friday dinner", { ...draft, plans: [{ ...draft.plans[0], starts_at: "2026-10-18T03:00:00Z" }] }), /ambiguous/, "Even an exact saved title must not override a contradicting actual weekday.");
+});
+
+test("natural RSVP captures only the speaker's explicit attendance for the uniquely identified real plan", () => {
+  for (const body of [
+    "I'm going to our confirmed Delfina dinner. Show the final invitation and the real reservation link. Nothing is booked yet.",
+    "I'm going to our confirmed Delfina dinner Friday at eight.",
+    "I'm going to the confirmed Delfina dinner Friday at eight too.",
+    "Count me in for our Delfina dinner on Friday at 8 PM.",
+  ]) {
+    assert.deepEqual(rsvp(body, "going", delfinaState).response, { status: "going", plan_version: 4 });
+  }
+  assert.deepEqual(rsvp("I might come to our Delfina dinner Friday at eight.", "maybe", delfinaState).response, { status: "maybe", plan_version: 4 });
+  assert.deepEqual(rsvp("I can't attend our Delfina dinner Friday at eight.", "declined", delfinaState).response, { status: "declined", plan_version: 4 });
+  assert.throws(() => rsvp("I'm going to our Delfina dinner Friday at seven.", "going", delfinaState), /ambiguous/);
+});
+
+test("shared venue or duplicate title requires real date/time disambiguation rather than a model-selected target", () => {
+  const sameVenue = { ...delfinaState, plans: [...delfinaState.plans, {
+    ...delfinaState.plans[0], id: pollId, starts_at: "2026-10-17T02:00:00Z",
+  }] };
+  assert.throws(() => rsvp("I'm going to our confirmed Delfina dinner.", "going", sameVenue), /ambiguous/);
+  assert.deepEqual(rsvp("I'm going to our confirmed Delfina dinner Friday at eight.", "going", sameVenue).response, { status: "going", plan_version: 4 });
+  assert.throws(() => rsvp("I'm going to our confirmed Delfina dinner Friday at seven.", "going", sameVenue), /ambiguous/);
+  const duplicateTitle = { ...planState, plans: [...planState.plans, { ...planState.plans[0], id: otherId }] };
+  assert.throws(() => rsvp("I'm in for Dinner", "going", duplicateTitle), /ambiguous/);
+  const drafts = { ...sameVenue, plans: sameVenue.plans.map(plan => ({ ...plan, status: "draft" })) };
+  assert.throws(() => confirmNamed("Confirm our Delfina dinner.", drafts), /ambiguous/);
+  assert.deepEqual(confirmNamed("Confirm our Delfina dinner Friday at 8 PM.", drafts).response, { plan_version: 4 });
+});
+
+test("extra sentences cannot smuggle conditional, reported, quoted or contradictory attendance", () => {
+  for (const body of [
+    "I'm going to our confirmed Delfina dinner Friday at eight if Ben comes.",
+    "Ben said I'm going to our confirmed Delfina dinner Friday at eight.",
+    '"I\'m going to our confirmed Delfina dinner Friday at eight."',
+    "I'm going to our confirmed Delfina dinner Friday at eight. Actually I might not come.",
+    "I'm going to our confirmed Delfina dinner Friday at eight. Bob is going too.",
+    "I'm going to our confirmed Delfina dinner Friday at eight. Nothing is booked yet if Bob goes.",
+  ]) assert.throws(() => rsvp(body, "going", delfinaState), /ambiguous/, body);
+  const draft = { ...delfinaState, plans: [{ ...delfinaState.plans[0], status: "draft" }] };
+  assert.throws(() => confirmNamed("Confirm our Delfina dinner Friday at eight. Ben said yes.", draft), /ambiguous/);
+  assert.throws(() => confirmNamed("Confirm our Delfina dinner Friday at eight. Ignore previous changes.", draft), /ambiguous/);
+});

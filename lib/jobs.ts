@@ -5,13 +5,14 @@ import { agentReply, parsedPalOutputs, sharedUrls } from "./validation";
 import { assertPublicURL } from "./research";
 import { initialTurnInput } from "./turn-context";
 import { EveInputPausedError, recoverEveResult } from "./eve-result";
+import { mockDemoReply } from "./demo-replies";
 
 export async function dispatchJobs() {
   const db = admin();
   const jobs = checked(await db.rpc("claim_agent_jobs", { p_limit: 3 })) as Job[];
   await Promise.all(jobs.map(async (job) => {
     try {
-      const client = new Client({
+      const client = () => new Client({
         host: env("PAL_BASE_URL"), redirect: "error",
         auth: { bearer: env("PAL_INTERNAL_SECRET") }, headers: { "x-pal-job-id": job.id },
       });
@@ -20,9 +21,10 @@ export async function dispatchJobs() {
       let structured: unknown;
       if (sessionId) {
         // shortcut: one turn per job, recover its durable stream instead of sending the request twice.
-        ({ body, structured } = await recoverEveResult(client.sessions.attach(sessionId)));
+        ({ body, structured } = await recoverEveResult(client().sessions.attach(sessionId)));
       } else {
-        const { batch } = await jobScope(job.id);
+        const scope = await jobScope(job.id);
+        const { batch } = scope;
         let recentQuery = db.from("messages").select("id,group_id,sender_id,role,body,created_at,reply_to_id,mentions,card,source_key")
           .eq("group_id", job.group_id).or("source_key.is.null,and(source_key.not.like.weekly:%,source_key.not.like.pal:weekly:%)")
           .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(21);
@@ -30,6 +32,14 @@ export async function dispatchJobs() {
         const [state, recent] = await Promise.all([
           db.rpc("pal_group_state", { p_group_id: job.group_id }).then(checked), recentQuery.then(checked),
         ]);
+        const mock = await mockDemoReply(scope, state);
+        if (mock) {
+          if (mock.outputs.length && !checked(await db.rpc("pal_begin_reply", { p_job_id: job.id, p_job_attempt: job.attempts }))) throw new Error("Reply lease is no longer active.");
+          checked(await db.rpc("complete_agent_job_with_outputs", {
+            p_job_id: job.id, p_attempt: job.attempts, p_outputs: mock.outputs, p_result: JSON.stringify(mock.result),
+          }));
+          return;
+        }
         const unavailableUrls: string[] = [];
         for (const source of batch) {
           for (const url of sharedUrls(source.body)) {
@@ -40,7 +50,7 @@ export async function dispatchJobs() {
         const timezone = state?.settings?.timezone || "UTC";
         const isDirect = state?.settings?.is_direct === true;
         const currentTime = new Date().toISOString();
-        const created = await client.sessions.create({
+        const created = await client().sessions.create({
           message: JSON.stringify(initialTurnInput(job, batch, state, (recent ?? []).reverse(), currentTime)),
           clientContext: { currentTime, timezone, unavailableUrls, isDirect },
           outputSchema: agentReply,
@@ -50,7 +60,7 @@ export async function dispatchJobs() {
           .eq("id", job.id).eq("attempts", job.attempts).eq("status", "running"));
         ({ body, structured } = await recoverEveResult(created.session));
       }
-      const oldSession = job.result && !["v1", "v2"].includes(JSON.parse(job.result).format);
+      const oldSession = job.result && !JSON.parse(job.result).mockDemo && !["v1", "v2"].includes(JSON.parse(job.result).format);
       if (structured === undefined && !oldSession) throw new Error("Pal did not return a structured result.");
       const outputs = parsedPalOutputs(structured ?? { reply: body ?? "", emotion: "fier" });
       checked(await db.rpc("complete_agent_job_with_outputs", {

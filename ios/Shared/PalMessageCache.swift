@@ -42,9 +42,9 @@ struct PalMessageCache {
         return cached.last?.id != latestMessageID
     }
 
-    mutating func acknowledge(_ message: ChatMessage) {
+    mutating func acknowledge(_ message: ChatMessage, protectUntilSnapshot: Bool = true) {
         let groupID = message.groupID
-        awaitingSnapshot[groupID] = Self.upsert(awaitingSnapshot[groupID] ?? [], adding: [message])
+        if protectUntilSnapshot { awaitingSnapshot[groupID] = Self.upsert(awaitingSnapshot[groupID] ?? [], adding: [message]) }
         messages[groupID] = Self.sorted(Self.upsert(messages[groupID] ?? [], adding: [message]))
     }
 

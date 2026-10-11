@@ -316,7 +316,7 @@ final class PalStore: ObservableObject {
     }
 
     @discardableResult
-    func send(_ body: String, to group: ChatGroup, clientID: UUID, replyTo: UUID? = nil, mentions: [MessageMention] = []) async throws -> ChatMessage {
+    func send(_ body: String, to group: ChatGroup, clientID: UUID, replyTo: UUID? = nil, mentions: [MessageMention] = [], demoStep: Int? = nil, demoGeneration: UUID? = nil) async throws -> ChatMessage {
         struct Response: Decodable { let message: ChatMessage }
         var payload: [String: JSONValue] = ["body": .string(body), "client_id": .string(clientID.uuidString)]
         if let replyTo { payload["reply_to_id"] = .string(replyTo.uuidString) }
@@ -325,18 +325,26 @@ final class PalStore: ObservableObject {
             if let userID = mention.userID { item["user_id"] = .string(userID.uuidString) }
             return .object(item)
         }) }
-        let message = try JSONDecoder().decode(Response.self, from: await api("/api/groups/\(group.id)/messages", method: "POST", json: payload)).message
+        let path: String
+        if let demoStep, let demoGeneration {
+            guard group.isDemo else { throw PalFailure(message: "This action is unavailable in this conversation.") }
+            payload = ["action": .string("next"), "step": .number(Double(demoStep)), "generation": .string(demoGeneration.uuidString), "body": .string(body), "client_id": .string(clientID.uuidString)]
+            path = "/api/groups/\(group.id)/demo"
+        } else { path = "/api/groups/\(group.id)/messages" }
+        let message = try JSONDecoder().decode(Response.self, from: await api(path, method: "POST", json: payload)).message
         acknowledge(message)
         return message
     }
 
     func loadState(_ group: ChatGroup) async throws {
         let generation = accountGeneration
+        let wasMember = groups.contains(where: { $0.id == group.id })
         updateFetch(.state(group.id)) { $0.begin() }
         do {
         let sequence = (stateRequests[group.id] ?? 0) + 1
         stateRequests[group.id] = sequence
         let loaded = try JSONDecoder().decode(GroupState.self, from: await api("/api/groups/\(group.id)/state"))
+        guard !wasMember || groups.contains(where: { $0.id == group.id }) else { throw CancellationError() }
         guard sequence >= (appliedStateRequests[group.id] ?? 0) else { updateFetch(.state(group.id)) { $0.finish() }; return }
         appliedStateRequests[group.id] = sequence
         if states[group.id] != loaded { states[group.id] = loaded }
@@ -543,9 +551,9 @@ final class PalStore: ObservableObject {
     }
     private func persistOutgoing() { UserDefaults.standard.set(try? JSONEncoder().encode(outgoing), forKey: "PalOutbox") }
 
-    func queue(_ body: String, group: ChatGroup, replyTo: UUID?, attachment: DraftAttachment? = nil, mentions: [MessageMention] = []) async {
+    func queue(_ body: String, group: ChatGroup, replyTo: UUID?, attachment: DraftAttachment? = nil, mentions: [MessageMention] = [], demoStep: Int? = nil, demoGeneration: UUID? = nil) async {
         guard let userID else { return }
-        let item = OutgoingMessage(groupID: group.id, userID: userID, clientID: UUID(), body: body, replyToID: replyTo, failed: false, attachment: attachment, createdAt: PalDate.iso(Date()), mentions: mentions)
+        let item = OutgoingMessage(groupID: group.id, userID: userID, clientID: UUID(), body: body, replyToID: replyTo, failed: false, attachment: attachment, createdAt: PalDate.iso(Date()), mentions: mentions, demoStep: demoStep, demoGeneration: demoGeneration)
         outgoing.append(item)
         persistOutgoing()
         await retry(item, group: group)
@@ -558,13 +566,24 @@ final class PalStore: ObservableObject {
             if let attachment = item.attachment {
                 _ = try await sendAttachment(attachment, body: item.body, to: group, clientID: item.clientID, replyTo: item.replyToID, mentions: item.mentions ?? [])
                 try? AttachmentFiles.remove(attachment)
-            } else { _ = try await send(item.body, to: group, clientID: item.clientID, replyTo: item.replyToID, mentions: item.mentions ?? []) }
+            } else { _ = try await send(item.body, to: group, clientID: item.clientID, replyTo: item.replyToID, mentions: item.mentions ?? [], demoStep: item.demoStep, demoGeneration: item.demoGeneration) }
             outgoing.removeAll { $0.clientID == item.clientID }
         } catch {
             if typingHints[group.id]?.clientID == item.clientID { typingHints[group.id] = nil }
             if let index = outgoing.firstIndex(where: { $0.clientID == item.clientID }) { outgoing[index].failed = true; report(error) }
         }
         persistOutgoing()
+    }
+
+    func resetDemo(_ group: ChatGroup) async throws {
+        guard group.isDemo, !outgoing.contains(where: { $0.groupID == group.id }) else { throw PalFailure(message: "Wait for your message to send before restarting.") }
+        _ = try await api("/api/groups/\(group.id)/demo", method: "POST", json: ["action": .string("reset")])
+        messageCache.prune(groupIDs: Set(groups.map(\.id)).subtracting([group.id]))
+        cachedMessages = messageCache.messages
+        states[group.id] = nil
+        async let history = messages(in: group)
+        async let details: Void = loadState(group)
+        _ = try await (history, details)
     }
 
     func reconcileOutgoing(with messages: [ChatMessage]) {
@@ -634,15 +653,18 @@ final class PalStore: ObservableObject {
         }
     }
 
-    private func acknowledge(_ message: ChatMessage) {
-        messageCache.acknowledge(message)
+    private func acknowledge(_ message: ChatMessage, protectUntilSnapshot: Bool = true) {
+        messageCache.acknowledge(message, protectUntilSnapshot: protectUntilSnapshot)
         if cachedMessages != messageCache.messages { cachedMessages = messageCache.messages }
         if message.role == "user", typingHints[message.groupID]?.clientID == message.clientID {
             typingHints[message.groupID]?.posted(after: stateRequests[message.groupID] ?? 0)
         }
         if let index = groups.firstIndex(where: { $0.id == message.groupID }) {
             let latest = GroupLastMessage(id: message.id, body: message.body, createdAt: message.createdAt, role: message.role)
-            if groups[index].lastMessage != latest { groups[index].lastMessage = latest }
+            let previous = groups[index].lastMessage
+            if (PalDate.date(latest.createdAt) ?? .distantPast) >= ((previous?.createdAt).flatMap(PalDate.date) ?? .distantPast), previous != latest {
+                groups[index].lastMessage = latest
+            }
         }
     }
 
@@ -666,20 +688,31 @@ final class PalStore: ObservableObject {
         guard !Task.isCancelled else { return }
         guard let owner = userID, let url = try? configuredURL("SupabaseURL"),
               let key = Bundle.main.object(forInfoDictionaryKey: "SupabasePublishableKey") as? String else { return }
+        let generation = accountGeneration
         await realtime.run(url: url, key: key, groupIDs: groups.map(\.id), token: { [weak self] in
-            guard let self, self.userID == owner else { throw CancellationError() }
+            guard let self, self.userID == owner, self.accountGeneration == generation else { throw CancellationError() }
             return try await self.token()
+        }, onMessage: { [weak self] message in
+            guard let self, self.userID == owner, self.accountGeneration == generation, !Task.isCancelled,
+                  self.groups.contains(where: { $0.id == message.groupID }),
+                  PalRealtimeProtocol.isNewMessage(message, among: self.cachedMessages[message.groupID] ?? []) else { return }
+            // Reject snapshots that started before this INSERT. Existing API-enriched
+            // messages stay intact; the next authorized refresh fills replies/media.
+            let base = "/api/groups/\(message.groupID)/"
+            self.reads.invalidate { $0.hasSuffix("/api/groups") || $0.contains(base) }
+            self.acknowledge(message, protectUntilSnapshot: false)
         }, onChange: { [weak self] groupID in
-            guard let self, self.userID == owner, !Task.isCancelled else { return }
-            // Realtime is an invalidation signal. Only the authenticated API enters the cache.
-            if let group = self.groups.first(where: { $0.id == groupID }), groupID == self.path.last {
-                _ = try? await self.messages(in: group)
-                try? await self.loadState(group)
-            } else if groupID == nil, let group = self.groups.first(where: { $0.id == self.path.last }) {
-                _ = try? await self.messages(in: group)
-                try? await self.loadState(group)
+            guard let self, self.userID == owner, self.accountGeneration == generation, !Task.isCancelled else { return }
+            // Coalesced background refreshes do not block the WebSocket receiver.
+            // Read receipts and other state churn do not invalidate message reads.
+            let group = self.groups.first(where: { $0.id == self.path.last && (groupID == nil || $0.id == groupID) })
+            await withTaskGroup(of: Void.self) { tasks in
+                tasks.addTask { @MainActor in try? await self.loadGroups() }
+                if let group {
+                    tasks.addTask { @MainActor in _ = try? await self.messages(in: group) }
+                    tasks.addTask { @MainActor in try? await self.loadState(group) }
+                }
             }
-            try? await self.loadGroups()
         })
     }
 }

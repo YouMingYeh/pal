@@ -35,7 +35,7 @@ const memory = z.object({
   expires_at: timestamp.nullable(), updated_at: timestamp.optional(),
 });
 const group = z.object({
-  id, name: z.string().max(100), timezone: z.string().max(100),
+  id, name: z.string().max(100), timezone: z.string().max(100), is_demo: z.boolean().default(false),
   members: z.array(z.object({ user_id: id, display_name: z.string().max(60) })).max(100),
   messages: z.array(message).max(20), plans: z.array(plan).max(10), places: z.array(place).max(10),
   sources: z.array(source).max(10), memories: z.array(memory).max(10), truncated: z.boolean().default(false),

@@ -60,6 +60,8 @@
 		DE32C06D20240D56DD61F281 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E1E2F9EF8B322C89126EA /* Session.swift */; };
 		DF5D6BCC2EC4D3D51E82B982 /* Attachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18C60A2C804E3A9DEF573F8C /* Attachments.swift */; };
 		E230B2750A8FB1AEFC986800 /* Attachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18C60A2C804E3A9DEF573F8C /* Attachments.swift */; };
+		E6152F83B9AE12D0208A738E /* DemoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06508A9D7321B9B917C8DD89 /* DemoTests.swift */; };
+		E7FCDEA1F91A4B97260E082D /* DemoSceneBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9682C57506C7F0AAF734DCD7 /* DemoSceneBar.swift */; };
 		F9090179D66B71B3752A26E9 /* FetchViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 724ED50AEDFF5855BFDA55AB /* FetchViews.swift */; };
 		F9D5AA7E3435ED0A2EF7B498 /* ConversationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C3463B85AF82F6361DEF50 /* ConversationTests.swift */; };
 /* End PBXBuildFile section */
@@ -97,6 +99,7 @@
 
 /* Begin PBXFileReference section */
 		04CBFAF2EEE8BD5E30A34B63 /* MascotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MascotView.swift; sourceTree = "<group>"; };
+		06508A9D7321B9B917C8DD89 /* DemoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoTests.swift; sourceTree = "<group>"; };
 		0B6B05588AFFC774B98F506B /* GroupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupViews.swift; sourceTree = "<group>"; };
 		18C60A2C804E3A9DEF573F8C /* Attachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Attachments.swift; sourceTree = "<group>"; };
 		284C3A207436DC0563A05224 /* AppleCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleCalendar.swift; sourceTree = "<group>"; };
@@ -118,6 +121,7 @@
 		8D7C60E655D843D1BED0D0B2 /* PalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalTests.swift; sourceTree = "<group>"; };
 		8FD3FA2DF7CC483B2D73E07F /* PalLocationSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalLocationSharing.swift; sourceTree = "<group>"; };
 		91916F06B448D4DD9F4899AC /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
+		9682C57506C7F0AAF734DCD7 /* DemoSceneBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoSceneBar.swift; sourceTree = "<group>"; };
 		98BBDEC957AADA768E424224 /* SharePayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePayload.swift; sourceTree = "<group>"; };
 		9C88929C3861C7A8FEB94B9D /* PalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalApp.swift; sourceTree = "<group>"; };
 		A431FB6DF88B543918027B8D /* PalFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalFetch.swift; sourceTree = "<group>"; };
@@ -196,6 +200,7 @@
 				E73AB9AC2B61A9116E43C40D /* AvatarTests.swift */,
 				4FE700ABBF4FDCAEBE14CB4C /* CalendarViewTests.swift */,
 				37C3463B85AF82F6361DEF50 /* ConversationTests.swift */,
+				06508A9D7321B9B917C8DD89 /* DemoTests.swift */,
 				B67FC22F8C4D2CA1233F344D /* FetchTests.swift */,
 				A7796669AF9D046DE352DCD3 /* GroupAccessTests.swift */,
 				59DCCD63D811E19B3BCE694F /* LocationSharingTests.swift */,
@@ -239,6 +244,7 @@
 				A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */,
 				EEF13EE303B074658390805C /* Assets.xcassets */,
 				CA03BD836188F8D6E6DE8284 /* Cards.swift */,
+				9682C57506C7F0AAF734DCD7 /* DemoSceneBar.swift */,
 				724ED50AEDFF5855BFDA55AB /* FetchViews.swift */,
 				4451B761072B9C27BA52A44D /* GroupAccessViews.swift */,
 				0B6B05588AFFC774B98F506B /* GroupViews.swift */,
@@ -406,6 +412,7 @@
 				2B15065AAFA4FEE9C28E7EF9 /* AppleSignIn.swift in Sources */,
 				E230B2750A8FB1AEFC986800 /* Attachments.swift in Sources */,
 				C0F4634D5863364F9CC77957 /* Cards.swift in Sources */,
+				E7FCDEA1F91A4B97260E082D /* DemoSceneBar.swift in Sources */,
 				F9090179D66B71B3752A26E9 /* FetchViews.swift in Sources */,
 				1CD0DE19FB25A806F7AFEDBD /* GroupAccessViews.swift in Sources */,
 				294FF5CD7D1120FBBE94FD30 /* GroupViews.swift in Sources */,
@@ -455,6 +462,7 @@
 				1A153864B649D8A2F1EAF2EE /* AvatarTests.swift in Sources */,
 				6BC003C7FECB8BD1D554A809 /* CalendarViewTests.swift in Sources */,
 				F9D5AA7E3435ED0A2EF7B498 /* ConversationTests.swift in Sources */,
+				E6152F83B9AE12D0208A738E /* DemoTests.swift in Sources */,
 				175D749E0DFB86C2808D75D5 /* FetchTests.swift in Sources */,
 				24D28BBFC7BDE1C8C0288D49 /* GroupAccessTests.swift in Sources */,
 				7F5C91E12949D95DB9C7C7CE /* LocationSharingTests.swift in Sources */,

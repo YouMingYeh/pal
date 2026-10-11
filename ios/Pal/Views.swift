@@ -24,6 +24,22 @@ private struct ChatScrollEdges: ViewModifier {
     }
 }
 
+/// User-driven scrolling owns its offset, including an interactive keyboard dismissal.
+private struct ChatScrollInteraction: ViewModifier {
+    @Binding var isInteracting: Bool
+    @GestureState private var dragging = false
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollPhaseChange { _, phase in
+                isInteracting = phase == .tracking || phase == .interacting || phase == .decelerating
+            }
+        } else {
+            content.simultaneousGesture(DragGesture(minimumDistance: 1).updating($dragging) { _, state, _ in state = true })
+                .onChange(of: dragging) { _, value in isInteracting = value }
+        }
+    }
+}
+
 private struct ChatNavigationSurface: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 26.0, *) { content.toolbarBackground(.hidden, for: .navigationBar) }
@@ -273,6 +289,11 @@ struct GroupsView: View {
 
 }
 
+private struct ChatContentHeight: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 private struct ChatBottomOffset: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
@@ -321,6 +342,9 @@ struct ChatView: View {
     @Environment(\.scenePhase) private var phase
     private var messages: [ChatMessage] { store.cachedMessages[group.id] ?? [] }
     @State private var draft = ""
+    @State private var demoComposer = DemoComposerState()
+    @State private var allowFocusedPrefill = false
+    @FocusState private var composerFocused: Bool
     @State private var attachment: DraftAttachment?
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showingPhotos = false
@@ -341,6 +365,11 @@ struct ChatView: View {
     @State private var lastRead: UUID?
     @State private var typingExpired = false
     @State private var atBottom = true
+    @State private var userIsScrolling = false
+    @State private var positionedGroup: UUID?
+    @State private var bottomAnchor = UUID()
+    @State private var transcriptAnchor = UUID()
+    @State private var scrollPosition: UUID?
     @State private var transcriptCache: (source: ChatTranscriptSource, rows: [ChatTranscriptRow])?
     private var state: GroupState { store.states[group.id] ?? .empty }
     private var pending: [OutgoingMessage] { store.outgoing.filter { $0.groupID == group.id && $0.userID == store.userID } }
@@ -353,19 +382,36 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 transcript(rows, reactions: reactions)
-            }.coordinateSpace(name: "chatScroll").onPreferenceChange(ChatBottomOffset.self) { bottom in
-                let reachedBottom = bottom <= viewport.size.height + 60
-                if atBottom != reachedBottom { atBottom = reachedBottom }
-            }.defaultScrollAnchor(.bottom).scrollDismissesKeyboard(.interactively).modifier(ChatScrollEdges()).refreshable { await refresh() }
-                .onChange(of: last?.id) { _, id in
-                    if let id, atBottom || last?.message?.senderID == store.userID || pending.last?.id == id { proxy.scrollTo(id, anchor: .bottom) }
+            }.onPreferenceChange(ChatBottomOffset.self) { bottom in
+                guard bottom.isFinite, bottom > 0 else { return }
+                let reachedBottom = bottom <= viewport.frame(in: .global).maxY + 60
+                if atBottom != reachedBottom {
+                    // Publish after the measurement pass, rather than feeding state back into that layout.
+                    Task { @MainActor in atBottom = reachedBottom }
+                }
+            }.scrollPosition(id: $scrollPosition, anchor: .bottom).scrollDismissesKeyboard(.interactively).modifier(ChatScrollInteraction(isInteracting: $userIsScrolling)).modifier(ChatScrollEdges()).refreshable { await refresh() }
+                .onChange(of: last?.id, initial: true) { _, id in
+                    guard let id, !userIsScrolling else { return }
+                    if positionedGroup != group.id {
+                        // A bound target survives later lazy-row and container layout; an early proxy call does not.
+                        positionedGroup = group.id
+                        scrollPosition = bottomAnchor
+                    } else if atBottom || last?.message?.senderID == store.userID || pending.last?.id == id {
+                        proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                    }
+                }
+                .onChange(of: viewport.frame(in: .global)) { _, _ in
+                    if atBottom, !userIsScrolling { proxy.scrollTo(bottomAnchor, anchor: .bottom) }
+                }
+                .onPreferenceChange(ChatContentHeight.self) { height in
+                    if height.isFinite, height > 0, atBottom, !userIsScrolling { proxy.scrollTo(bottomAnchor, anchor: .bottom) }
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) { composer }
                 .onChange(of: scrollToReply) { _, id in
                     if let id { withAnimation { proxy.scrollTo(id, anchor: .center) }; scrollToReply = nil }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    if !atBottom { Button { if let id = last?.id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } } } label: { Image(systemName: "arrow.down").frame(width: 44, height: 44).modifier(PalGlass(cornerRadius: 22)) }.buttonStyle(.plain).accessibilityLabel("Latest messages").padding(.trailing, 16).padding(.bottom, 120) }
+                    if !atBottom { Button { if last != nil { withAnimation { proxy.scrollTo(bottomAnchor, anchor: .bottom) } } } label: { Image(systemName: "arrow.down").frame(width: 44, height: 44).modifier(PalGlass(cornerRadius: 22)) }.buttonStyle(.plain).accessibilityLabel("Latest messages").padding(.trailing, 16).padding(.bottom, 120) }
                 }
         }
         }.onChange(of: source, initial: true) { _, updated in
@@ -379,7 +425,12 @@ struct ChatView: View {
                 }
                 if !group.isDirect { ToolbarItem(placement: .topBarTrailing) { Button { hangoutIdeas = true } label: { Image(systemName: "bookmark") }.accessibilityLabel("Hangout ideas") } }
                 if !group.isDirect { ToolbarItem(placement: .topBarTrailing) { Button { calendar = true } label: { Image(systemName: "calendar") }.accessibilityLabel("Group calendar") } }
+                if group.isDemo { ToolbarItem(placement: .topBarTrailing) { DemoRestartControl(group: group) } }
             }
+            .onChange(of: state.demo, initial: true) { _, _ in prefillNextMessage() }
+            .onChange(of: pending.map(\.id)) { _, _ in prefillNextMessage() }
+            .onChange(of: composerFocused) { _, focused in if !focused { prefillNextMessage() } }
+            .onChange(of: draft) { _, text in if !text.isEmpty { allowFocusedPrefill = false } }
             .photosPicker(isPresented: $showingPhotos, selection: $selectedPhoto, matching: .images)
             .fullScreenCover(isPresented: $showingCamera) { CameraCapture(onCapture: { data in Task { await preparePhoto(data) } }, onError: { store.report($0) }) }
             .sheet(isPresented: $showingAudio) { AudioRecorderView(onCapture: { replaceAttachment($0) }, onError: { store.report($0) }) }
@@ -410,7 +461,8 @@ struct ChatView: View {
     }
     private func transcript(_ rows: [ChatTranscriptRow], reactions: [UUID: [MessageReaction]]) -> some View {
         let items = rows
-        return LazyVStack(spacing: 9) {
+        return VStack(spacing: 0) {
+        LazyVStack(spacing: 9) {
             if items.isEmpty, store.cachedMessages[group.id] == nil {
                 if pollingError == nil { ProgressView("Loading messages…").padding(.vertical, 36) }
                 else { Button("Try again") { Task { await refresh() } }.padding(.vertical, 36) }
@@ -427,8 +479,14 @@ struct ChatView: View {
                     }
                 }
             }
-            Color.clear.frame(height: 1).background(GeometryReader { geometry in Color.clear.preference(key: ChatBottomOffset.self, value: geometry.frame(in: .named("chatScroll")).maxY) })
-        }.padding(16)
+        }.padding(16).id(transcriptAnchor)
+        // This target must live outside the lazy stack so it is laid out before its rows become visible.
+        Color.clear.frame(height: 1).id(bottomAnchor).background(GeometryReader { geometry in
+            Color.clear.preference(key: ChatBottomOffset.self, value: geometry.frame(in: .global).maxY)
+        })
+        }.scrollTargetLayout().background(GeometryReader { geometry in
+            Color.clear.preference(key: ChatContentHeight.self, value: geometry.size.height)
+        })
     }
     private func pendingRow(_ item: OutgoingMessage) -> some View {
         HStack { Spacer(minLength: 44); VStack(alignment: .trailing, spacing: 4) {
@@ -436,7 +494,7 @@ struct ChatView: View {
                 replyPreview(name: memberName(original), body: original.body) { scrollToReply = original.timelineID }
             }
             if let media = item.attachment { DraftMediaPreview(draft: media, onRemove: nil) }
-            if !item.body.isEmpty { Text(PalText.linked(item.body, mentions: item.mentions ?? [], members: state.members)).font(.title3).tint(PalTheme.accentOnInk).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(PalTheme.onInk).background(PalTheme.ink, in: RoundedRectangle(cornerRadius: 20)) }
+            if !item.body.isEmpty { Text(PalText.linked(item.body, mentions: item.mentions ?? [], members: state.members)).font(.title3).fixedSize(horizontal: false, vertical: true).tint(PalTheme.accentOnInk).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(PalTheme.onInk).background(PalTheme.ink, in: RoundedRectangle(cornerRadius: 20)) }
             if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(PalTheme.error).frame(minHeight: 44) }
         } }
     }
@@ -476,7 +534,7 @@ struct ChatView: View {
                         LocationSharingMenu(group: group, sharing: locationSharing)
                     }
                 } label: { Image(systemName: "plus").font(.title3.weight(.medium)).frame(width: 44, height: 44).foregroundStyle(.primary).modifier(PalGlass(cornerRadius: 22)) }.accessibilityLabel("Add attachment").disabled(processingPhoto)
-                TextField(group.isDirect ? "Message Pal" : "Message", text: $draft, axis: .vertical).font(.title3).lineLimit(1...5).padding(12).modifier(PalGlass(cornerRadius: 25)).accessibilityLabel(group.isDirect ? "Message Pal" : "Message")
+                TextField(group.isDirect ? "Message Pal" : "Message", text: $draft, axis: .vertical).focused($composerFocused).font(.title3).lineLimit(1...5).padding(12).modifier(PalGlass(cornerRadius: 25)).accessibilityLabel(group.isDirect ? "Message Pal" : "Message")
                 PalSendButton(disabled: processingPhoto || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachment == nil), action: sendDraft)
             }.padding(.horizontal, 15).padding(.bottom, 10)
         }
@@ -571,7 +629,7 @@ struct ChatView: View {
                     replyPreview(name: original.map(memberName) ?? (message.reply?.role == "pal" ? "Pal" : state.members.first { $0.userID == message.reply?.senderID }?.displayName ?? "Message"), body: original?.body ?? message.reply?.body ?? "Earlier message") { scrollToReply = original?.timelineID ?? replyID }
                 }
                 if let body = message.plainBody(in: state) {
-                    Text(PalText.linked(body, markdown: message.role == "pal", mentions: message.mentions, members: state.members)).font(.title3).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+                    Text(PalText.linked(body, markdown: message.role == "pal", mentions: message.mentions, members: state.members)).font(.title3).fixedSize(horizontal: false, vertical: true).textSelection(.enabled).tint(mine ? PalTheme.accentOnInk : PalTheme.accentText).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                         .contextMenu { messageMenu(message, mine: mine) }
                 }
                 ForEach(message.cards.filter { ["plan", "rsvp", "options", "choice", "availability", "question"].contains($0.type) && ($0.type != "question" || $0.questionText(for: group.id) != nil) }) { card in PalCardView(group: group, card: card, sourceMessageID: message.id).contextMenu { messageMenu(message, mine: mine) } }
@@ -597,13 +655,23 @@ struct ChatView: View {
         Button("Reply", systemImage: "arrowshape.turn.up.left") { reply = message }
         Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.body }
     }
+    private func prefillNextMessage() {
+        if let prompt = demoComposer.suggestion(for: state.demo, isDemo: group.isDemo, draft: draft,
+                                                isEditing: composerFocused && !allowFocusedPrefill, hasPending: !pending.isEmpty,
+                                                hasAttachment: attachment != nil || processingPhoto, hasReply: reply != nil) {
+            draft = prompt
+        }
+    }
     private func sendDraft() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !processingPhoto, !text.isEmpty || attachment != nil else { return }
         let media = attachment, replyID = reply?.id
-        let mentions = PalMentions.retained(selectedMentions, in: text)
+        let submission = demoComposer.submission(for: draft, demo: state.demo, hasAttachment: media != nil, hasReply: replyID != nil)
+        let body = submission?.body ?? text
+        let mentions = PalMentions.retained(selectedMentions, in: body)
         draft = ""; reply = nil; attachment = nil; selectedPhoto = nil; selectedMentions = [:]
-        Task { await store.queue(text, group: group, replyTo: replyID, attachment: media, mentions: mentions); await refresh() }
+        allowFocusedPrefill = true
+        Task { await store.queue(body, group: group, replyTo: replyID, attachment: media, mentions: mentions, demoStep: submission?.step, demoGeneration: submission?.generation); await refresh() }
     }
     private func react(_ emoji: String, to message: ChatMessage) { Task { do { try await store.mutate(group, action: "reaction.toggle", data: ["message_id": .string(message.id.uuidString), "emoji": .string(emoji)]) } catch { store.report(error) } } }
     private func refresh() async {

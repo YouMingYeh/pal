@@ -1,3 +1,4 @@
+import { promptsForDemo } from "../../../../../lib/demo";
 import { after } from "next/server";
 import { authenticated, member, route } from "../../../../../lib/http";
 import { checked } from "../../../../../lib/db";
@@ -21,6 +22,7 @@ export function GET(request: Request, context: Context) {
       Promise.all(state.members.map((member: Parameters<typeof signedAvatar>[0]) => signedAvatar(member))),
       signedGroupAvatar(state.settings),
     ]);
+    if (state.demo) state.demo.next_prompt = promptsForDemo(state.demo.kind ?? "plan")[state.demo.step] ?? null;
     return Response.json(state);
   });
 }

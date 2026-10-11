@@ -40,7 +40,12 @@ export function actionSourceKey(jobId: string, action: keyof typeof actionSchema
 
 export async function agentAction(context: Parameters<typeof scopeId>[0], action: keyof typeof actionSchemas,
   data: Record<string, unknown>, identity: string, sourceMessageId?: string) {
-  const { job, db, batch } = await jobScope(scopeId(context));
+  return agentActionInScope(await jobScope(scopeId(context)), action, data, identity, sourceMessageId);
+}
+
+/** Reuse a scope verified in this tool call; each mutation still passes the authoritative SQL job guard. */
+export async function agentActionInScope({ job, db, batch }: Awaited<ReturnType<typeof jobScope>>,
+  action: keyof typeof actionSchemas, data: Record<string, unknown>, identity: string, sourceMessageId?: string) {
   const source = sourceMessageId ? batchSpeaker(batch, sourceMessageId) : undefined;
   const parsed = parseAgentAction(action, data);
   return checked(await db.rpc("pal_agent_action", {

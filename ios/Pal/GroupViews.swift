@@ -212,7 +212,7 @@ struct GroupCalendarView: View {
                         Button("Previous month", systemImage: "chevron.left") { moveMonth(-1) }
                             .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                         Spacer()
-                        Text(month.formatted(.dateTime.month(.wide).year())).font(.headline).accessibilityAddTraits(.isHeader)
+                        Text(month.formatted(.dateTime.month(.wide).year())).font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
                         Spacer()
                         Button("Next month", systemImage: "chevron.right") { moveMonth(1) }
                             .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
@@ -228,8 +228,8 @@ struct GroupCalendarView: View {
                         }
                     }.tabViewStyle(.page(indexDisplayMode: .never))
                         .frame(height: dayHeight * 6 + 40)
-                }.buttonStyle(.plain)
-            }
+                }.buttonStyle(.plain).padding(.vertical, 4)
+            }.listRowBackground(Color(uiColor: .secondarySystemBackground))
             Section(selected.formatted(date: .abbreviated, time: .omitted)) {
                 let plans = state.plans.filter { $0.status != "cancelled" && onDay($0.startsAt) }
                 let reminders = state.reminders.filter { $0.status != "cancelled" && onDay($0.dueAt) }
@@ -239,7 +239,7 @@ struct GroupCalendarView: View {
                 if store.states[group.id] != nil && plans.isEmpty && reminders.isEmpty {
                     VStack(spacing: 10) {
                         Image("DoodleCalendar").renderingMode(.template).resizable().scaledToFit()
-                            .frame(width: 64, height: 64).foregroundStyle(.secondary).accessibilityHidden(true)
+                            .frame(width: 48, height: 48).foregroundStyle(.secondary).accessibilityHidden(true)
                         Text("Nothing planned for this day.").foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity).padding(.vertical, 12)
                 }
@@ -258,7 +258,9 @@ struct GroupCalendarView: View {
             if !past.isEmpty {
                 Section("Past and cancelled") { ForEach(past) { plan in planLink(plan) } }
             }
-        }.navigationTitle("Calendar").navigationBarTitleDisplayMode(.inline)
+        }.listStyle(.insetGrouped).scrollContentBackground(.hidden)
+        .background(Color(uiColor: .systemBackground))
+        .navigationTitle("Calendar").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Today", action: showToday) } }
         .onChange(of: page) { _, value in
             extendPages(near: value)
@@ -291,26 +293,17 @@ struct GroupCalendarView: View {
     }
     private func planLink(_ plan: GroupPlan) -> some View {
         NavigationLink { PlanDetailView(group: group, plan: plan) } label: {
-            Label {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(plan.title).foregroundStyle(.primary)
-                    Text(plan.startsAt.flatMap(PalDate.date)?.formatted(date: .abbreviated, time: .shortened) ?? "Time to be decided")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text(plan.status.capitalized).font(.caption).foregroundStyle(.secondary)
-                }
-            } icon: { Image(systemName: "calendar").foregroundStyle(PalTheme.ink) }
-        }
+            CalendarAgendaLabel(title: plan.title,
+                detail: plan.startsAt.flatMap(PalDate.date)?.formatted(date: .abbreviated, time: .shortened) ?? "Time to be decided",
+                emoji: "📅", status: plan.status == "confirmed" ? nil : plan.status.capitalized)
+        }.listRowBackground(Color(uiColor: .secondarySystemBackground))
     }
     private func reminderLink(_ reminder: GroupReminder) -> some View {
         NavigationLink { ReminderEditor(group: group, reminder: reminder) } label: {
-            Label {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(reminder.body).foregroundStyle(.primary)
-                    Text(PalDate.date(reminder.dueAt)?.formatted(date: .abbreviated, time: .shortened) ?? reminder.dueAt).font(.caption).foregroundStyle(.secondary)
-                    Text(reminder.status.capitalized).font(.caption).foregroundStyle(.secondary)
-                }
-            } icon: { Image(systemName: "bell").foregroundStyle(.secondary) }
-        }
+            CalendarAgendaLabel(title: reminder.body,
+                detail: PalDate.date(reminder.dueAt)?.formatted(date: .abbreviated, time: .shortened) ?? reminder.dueAt,
+                emoji: "🔔", status: reminder.status == "scheduled" ? nil : reminder.status.capitalized)
+        }.listRowBackground(Color(uiColor: .secondarySystemBackground))
     }
     private func date(for page: Int) -> Date { Calendar.current.date(byAdding: .month, value: page, to: anchor) ?? anchor }
     private func extendPages(near page: Int) {
@@ -333,6 +326,24 @@ struct GroupCalendarView: View {
         }
     }
     private func refresh() async { do { try await store.loadState(group) } catch { /* State status supplies retry while preserving the calendar. */ } }
+}
+
+struct CalendarAgendaLabel: View {
+    let title: String
+    let detail: String
+    let emoji: String
+    var status: String? = nil
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text(emoji).font(.title2).frame(width: 48, height: 48)
+                .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 14)).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title).font(.headline).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+                Text(detail).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(.vertical, 5).accessibilityElement(children: .combine)
+    }
 }
 
 struct PlanDetailView: View {

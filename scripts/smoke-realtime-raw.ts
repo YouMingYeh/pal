@@ -20,7 +20,7 @@ async function provision() {
   if (signed.error || !signed.data.session) { await db.auth.admin.deleteUser(created.data.user.id); throw new Error("Raw probe fixture sign-in failed."); }
   const user = { id: created.data.user.id, token: signed.data.session.access_token, client }; users.push(user); return user;
 }
-async function subscribe(token: string, received: string[], label: string) {
+async function subscribe(token: string, received: string[], label: string, arrivals: Map<string, number>) {
   const url = new URL(env("SUPABASE_URL"));
   assert.equal(url.protocol, "https:"); url.protocol = "wss:"; url.pathname = "/realtime/v1/websocket";
   url.search = new URLSearchParams({ apikey: env("SUPABASE_PUBLISHABLE_KEY"), vsn: "1.0.0" }).toString();
@@ -53,7 +53,7 @@ async function subscribe(token: string, received: string[], label: string) {
       }
       const data = frame.payload?.data;
       if (frame.event === "postgres_changes" && data?.schema === "public" && data.table === "messages" && data.type === "INSERT"
-        && data.record?.group_id === groupId && typeof data.record.id === "string") received.push(data.record.id);
+        && data.record?.group_id === groupId && typeof data.record.id === "string") { received.push(data.record.id); arrivals.set(data.record.id, Date.now()); }
     });
   });
 }
@@ -64,7 +64,9 @@ try {
   checked(await db.from("groups").update({ agent_paused: true, proactive_suggestions: false }).eq("id", groupId).eq("creator_id", owner.id));
   checked(await member.client.rpc("join_group", { p_invite_code: group.invite_code }));
   const received: string[][] = [[], [], []];
-  await Promise.all(users.map((user, index) => subscribe(user.token, received[index], ["owner", "member", "outsider"][index])));
+  const arrivals = [new Map<string, number>(), new Map<string, number>(), new Map<string, number>()];
+  await Promise.all(users.map((user, index) => subscribe(user.token, received[index], ["owner", "member", "outsider"][index], arrivals[index])));
+  const sentAt = Date.now();
   const response = await fetch(`${origin.origin}/api/groups/${groupId}/messages`, { method: "POST", redirect: "error",
     headers: { authorization: `Bearer ${member.token}`, "content-type": "application/json" },
     body: JSON.stringify({ body: "Actual raw Realtime proof.", client_id: randomUUID() }), signal: AbortSignal.timeout(30000) });
@@ -75,6 +77,7 @@ try {
   assert.ok(received[0].includes(source.id), "Raw protocol owner received no actual INSERT.");
   assert.ok(received[1].includes(source.id), "Raw protocol member received no actual INSERT.");
   await sleep(2000); assert.equal(received[2].length, 0, "Raw protocol outsider must receive no protected INSERT.");
+  console.log(JSON.stringify({ sendToOwnerMs: arrivals[0].get(source.id)! - sentAt, sendToMemberMs: arrivals[1].get(source.id)! - sentAt }));
   console.log("PASS: actual raw v1 WebSocket INSERT reached both members after CDC readiness; authenticated outsider received none.");
 } finally {
   for (const heartbeat of heartbeats) clearInterval(heartbeat);

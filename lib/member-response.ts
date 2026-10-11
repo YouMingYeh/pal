@@ -11,8 +11,8 @@ export const memberResponseInput = z.discriminatedUnion("target_kind", [
 type Input = z.infer<typeof memberResponseInput>;
 type Option = { id: string; label: string; starts_at?: string };
 type Poll = { id: string; group_id: string; kind: "place" | "time"; status: string; deadline_at: string; created_at: string; question: string; options: Option[] };
-type Plan = { id: string; group_id: string; title: string; status: string; starts_at: string; created_at: string; updated_at: string; version: number };
-export type ResponseState = { polls: Poll[]; plans: Plan[]; settings: { timezone: string } };
+type Plan = { id: string; group_id: string; title: string; status: string; starts_at: string; created_at: string; updated_at: string; version: number; place_id?: string | null };
+export type ResponseState = { polls: Poll[]; plans: Plan[]; places?: { id: string; name: string; group_id?: string }[]; settings: { timezone: string } };
 const clarify = () => { throw new Error("The speaker's response is ambiguous. Ask one short clarification; do not record a vote or RSVP."); };
 const normalized = (value: string) => value.toLowerCase().replace(/[’‘]/g, "'").replace(/[^\p{L}\p{N}:]+/gu, " ").trim();
 const sameChoices = (a: string[], b: string[]) => a.length === b.length && a.every(value => b.includes(value));
@@ -31,6 +31,51 @@ function explicitRsvp(text: string, title: string) {
 function explicitConfirmation(text: string, title: string) {
   const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^(?:(?:i confirm|confirm|let's confirm|let us confirm) (?:the plan|this plan|${escaped})|(?:我確認|我确认|確認|确认)(?:這個計畫|这个计划|計畫|计划|${escaped}))[.!。！]*$`, "i").test(text);
+}
+
+function planIntentText(text: string) {
+  const [intent, ...following] = text.split(/[.!。！]+/).map(part => part.trim()).filter(Boolean);
+  const harmless = /^(?:ask everyone to rsvp|show the final invitation(?: and the real reservation link)?|the restaurant is not booked yet|nothing is booked yet|nothing booked yet|no table booked yet)$/i;
+  if (!intent || following.some(part => !harmless.test(part))) clarify();
+  return intent;
+}
+
+function namedPlanReference(reference: string, plan: Plan, source: SourceMessage, state: ResponseState) {
+  const weekdays = /\b(?:sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?)\b/gi;
+  const clock = /\bat\s+(?:\d{1,2}(?::\d{2})?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(?:am|pm)?\b/gi;
+  const fillers = new Set(["our", "the", "this", "confirmed", "plan", "for", "on", "at", "too"]);
+  const terms = (value: string) => normalized(value.replace(clock, " ").replace(weekdays, " ")).split(" ").filter(word => word && !fillers.has(word));
+  const spoken = terms(reference), title = terms(plan.title);
+  const place = state.places?.find(place => place.id === plan.place_id && (!place.group_id || place.group_id === plan.group_id));
+  const venue = place ? terms(place.name) : [];
+  const contains = (words: string[]) => words.length > 0 && words.every(word => spoken.includes(word));
+  if (!contains(title) && !contains(venue)) return false;
+  const allowed = new Set([...title, ...venue]);
+  if (spoken.some(word => !allowed.has(word))) return false;
+  const hasDay = reference.match(weekdays);
+  const clocks = reference.match(clock);
+  if (!hasDay && !clocks) return true;
+  const option = { id: plan.id, label: plan.title, starts_at: plan.starts_at };
+  const poll = { options: [option] } as Poll;
+  // A spoken weekday is anchored to the original message. A named-plan clock alone checks that plan's local time.
+  const anchored = hasDay ? source : { ...source, created_at: plan.starts_at };
+  const dated = hasDay ? reference : `${localParts(plan.starts_at, state.settings.timezone).weekday} ${reference}`;
+  return sameChoices(timeChoices(dated, poll, anchored, state.settings.timezone), [plan.id]);
+}
+
+function planIntentMatches(text: string, kind: "confirmation" | "plan", status: string | undefined,
+  plan: Plan, source: SourceMessage, state: ResponseState) {
+  const legacy = kind === "confirmation" ? explicitConfirmation(text, plan.title) : explicitRsvp(text, plan.title) === status;
+  const temporal = /\b(?:sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|at\s+(?:\d|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))/i.test(text);
+  if (legacy && !temporal) return true;
+  const confirmation = text.match(/^(?:i confirm|confirm|let's confirm|let us confirm)\s+(.+)$/i);
+  const rsvpPatterns = {
+    going: /^(?:i(?:'m| am) (?:in|coming|going|attending)|count me in|i(?:'ll| will) (?:be there|come|attend|join))\s+(?:(?:for|to|at)\s+)?(.+)$/i,
+    declined: /^(?:i (?:can't|cannot|won't|will not) (?:make it|come|attend|join)|i(?:'m| am) not (?:coming|going|attending))\s+(?:(?:for|to|at)\s+)?(.+)$/i,
+    maybe: /^(?:i(?:'m| am) (?:a )?maybe|i (?:might|may) (?:come|attend|join))\s+(?:(?:for|to|at)\s+)?(.+)$/i,
+  };
+  const match = kind === "confirmation" ? confirmation : rsvpPatterns[status as keyof typeof rsvpPatterns]?.exec(text);
+  return Boolean(match && namedPlanReference(match[1], plan, source, state));
 }
 
 function localParts(date: string, timezone: string) {
@@ -74,28 +119,28 @@ export function prepareMemberResponse(raw: unknown, batch: SourceMessage[], stat
   const source = batchSpeaker(batch, input.source_message_id);
   if (source.group_id !== groupId || source.body.trim() !== input.evidence) throw new Error("Use the entire verified speaker message as verbatim evidence.");
   const text = input.evidence.trim().replace(/[’‘]/g, "'");
+  const intentText = input.target_kind === "poll" ? text : planIntentText(text);
   // Reject reported speech, quoted utterances, conditions and banter before interpreting first-person language.
-  if (/["“”«»]|(?:^|\s)'[^']+'|[?？]|\b(?:said|says|told|asked|joking|kidding|jk|unless|if|depends|pretend|ignore|override)\b/i.test(text)
-    || /\b(?:he|she|they|you|we)\s+(?:can|can't|will|won't|are|is|might|prefer|choose|vote|agree)\b/i.test(text)
-    || /\b[A-Z][a-z]+\s+(?:can|can't|will|won't|is|might|prefers?|chooses?|votes?|agrees?)\b/.test(text)) clarify();
+  if (/["“”«»]|(?:^|\s)'[^']+'|[?？]|\b(?:said|says|told|asked|joking|kidding|jk|unless|if|depends|pretend|ignore|override)\b/i.test(intentText)
+    || /\b(?:he|she|they|you|we)\s+(?:can|can't|will|won't|are|is|might|prefer|choose|vote|agree)\b/i.test(intentText)
+    || /\b[A-Z][a-z]+\s+(?:can|can't|will|won't|is|might|prefers?|chooses?|votes?|agrees?)\b/.test(intentText)) clarify();
   if (input.target_kind === "confirmation") {
     const target = state.plans.find(plan => plan.id === input.target_id && plan.group_id === groupId);
     if (!target || target.status !== "draft" || Date.parse(target.starts_at) <= now || Date.parse(source.created_at) < Date.parse(target.updated_at)) {
       throw new Error("Choose a current, future draft plan discussed after its latest change.");
     }
-    if (!explicitConfirmation(text, target.title)) clarify();
-    const active = state.plans.filter(plan => plan.status === "draft" && Date.parse(plan.starts_at) > now);
-    if (active.length !== 1 && !normalized(text).includes(normalized(target.title))) clarify();
+    const matched = state.plans.filter(plan => plan.group_id === groupId && plan.status === "draft" && Date.parse(plan.starts_at) > now
+      && planIntentMatches(intentText, "confirmation", undefined, plan, source, state));
+    if (matched.length !== 1 || matched[0].id !== target.id) clarify();
     return { source, response: { plan_version: target.version } };
   }
   if (input.target_kind === "plan") {
     const target = state.plans.find(plan => plan.id === input.target_id && plan.group_id === groupId);
     if (!target || target.status !== "confirmed" || Date.parse(target.starts_at) <= now || Date.parse(source.created_at) < Date.parse(target.updated_at)) throw new Error("Choose a current, future confirmed plan discussed after its latest change.");
-    const stated = explicitRsvp(text, target.title);
-    if (stated !== input.status || either.test(text) || /\b(?:maybe|might|may)\b/i.test(text) && stated !== "maybe") clarify();
-    const active = state.plans.filter(plan => plan.status === "confirmed" && Date.parse(plan.starts_at) > now);
-    const named = normalized(text).includes(normalized(target.title));
-    if (active.length !== 1 && !named) clarify();
+    if (either.test(intentText) || /\b(?:maybe|might|may)\b/i.test(intentText) && input.status !== "maybe") clarify();
+    const matched = state.plans.filter(plan => plan.group_id === groupId && plan.status === "confirmed" && Date.parse(plan.starts_at) > now
+      && planIntentMatches(intentText, "plan", input.status, plan, source, state));
+    if (matched.length !== 1 || matched[0].id !== target.id) clarify();
     // A bare yes/no/maybe is only meaningful in reply to the confirmed plan, not an open poll.
     if (/^(?:yes|no|maybe)[.!。！]*$/i.test(text) && state.polls.some(poll => poll.status === "open" && Date.parse(poll.deadline_at) > now)) clarify();
     return { source, response: { status: input.status, plan_version: target.version } };

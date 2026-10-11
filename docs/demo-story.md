@@ -1,6 +1,6 @@
 # Pal: five-minute demo and product flow
 
-This is the proposed experience, grounded in the current build. The expanded story is being discussed before further implementation. Fictional dialogue and staged participants are demo data; provider results must remain factual.
+This story is grounded in the current build. Two controlled mock rooms demonstrate everyday banter and the central dinner flow; see [the operator guide](demo-room.md). Fictional dialogue and staged participants are demo data; provider results must remain factual.
 
 ## Decisions agreed with the founder
 
@@ -16,7 +16,7 @@ A friend group has already shared places and discussed preferences. Pal brings t
 
 ### 0:00–0:35 — Show the coordination problem
 
-Open a group containing explicitly staged conversation and previously inspected real links. Do not spend stage time signing in or creating the group.
+Open Demo · Dinner containing explicitly staged conversation and previously inspected real links. Do not spend stage time signing in or creating the group.
 
 Presenter:
 > “The ideas are already here. What usually happens next is one person rereading the chat, finding the links, asking everyone when they’re free, and chasing replies. Pal takes on that coordination work.”
@@ -28,11 +28,11 @@ Show differing availability, a vegetarian preference and a budget in ordinary me
 A member writes:
 > “We should actually get dinner together Friday.”
 
-Pal responds naturally, with its own animated expression, then asks one missing question. Use the real generated wording; examples are direction, not guaranteed model output:
+Pal responds naturally, with its own animated expression, then asks one missing question. Use the real generated wording in normal rooms; controlled Demo rooms use short scripted dialogue and must be disclosed as a mock when presenting:
 > “The restaurant collection is ready for its first field trip.”
 > “Friday after seven, or would Saturday be easier?”
 
-Show suggested responses and one member typing a custom answer. Keep conversation going while the agent works; the current live checks took approximately 12–16 seconds for useful multi-step turns. Do not describe generation as instantaneous.
+Show suggested responses and one member typing a custom answer. Keep conversation going while the agent works; live multi-step turns take several seconds and must be rehearsed on the deployed build. Do not describe generation as instantaneous.
 
 This proves selective participation in a new planning idea. Weekly unsolicited suggestions are a separate behavior and are not proven by this live exchange.
 
@@ -119,3 +119,5 @@ Use real measurements collected with consent: time to a confirmed plan, unresolv
 ## Rehearsal
 
 Pick one group and one real inspected venue in advance; use the actual names and facts. Check source access, current future dates/timezone, reservation destination, the acting member’s calendar consent and notification permission. Keep an accessible alternative venue. Label the fictional conversation and participants. Rehearse a full plan confirmation and own RSVP once; a failed integration should retain the plan and offer a truthful recovery. Keep the two-minute booking/decision segment within its time box instead of making the audience wait through every extraction or model step.
+
+The two controlled rehearsal rooms use mock dialogue for reliable stage timing. Dinner persists real plan/RSVP records, but mock dialogue is not evidence of autonomous model decisions or live tables. Show an ordinary room separately for actual agent execution, and disclose this split in the presentation.

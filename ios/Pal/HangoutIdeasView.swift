@@ -7,6 +7,12 @@ struct HangoutIdea: Identifiable, Equatable {
     let place: GroupPlace?
     let sources: [GroupSource]
     var thumbnail: URL? { sources.lazy.compactMap(\.thumbnailURL).first }
+    var emoji: String {
+        let text = title.lowercased()
+        if ["coffee", "cafe", "café", "咖啡"].contains(where: text.contains) { return "☕️" }
+        if ["park", "hike", "hiking", "walk", "公園", "步道"].contains(where: text.contains) { return "🌳" }
+        return "🍽️"
+    }
 
     static func saved(in state: GroupState) -> [HangoutIdea] {
         var ideas: [HangoutIdea] = []
@@ -76,7 +82,7 @@ struct HangoutIdeasView: View {
                 ContentUnavailableView("No ideas yet", systemImage: "bookmark", description: Text("Share a link in this chat. Pal keeps the ideas here."))
                     .listRowSeparator(.hidden).listRowBackground(Color.clear)
             }
-        }.listStyle(.plain).navigationTitle("Hangout Ideas").navigationBarTitleDisplayMode(.inline)
+        }.listStyle(.plain).scrollContentBackground(.hidden).background(Color(uiColor: .systemBackground)).navigationTitle("Hangout Ideas").navigationBarTitleDisplayMode(.inline)
             .refreshable { await refresh() }
             .task { if store.states[group.id] == nil { await refresh() } }
     }
@@ -86,13 +92,16 @@ struct HangoutIdeasView: View {
 struct HangoutIdeaRow: View {
     let idea: HangoutIdea
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(alignment: .top, spacing: 14) {
             if let thumbnail = idea.thumbnail {
-                PalCachedAvatarImage(url: thumbnail).frame(width: 76, height: 76)
+                PalCachedAvatarImage(url: thumbnail).frame(width: 60, height: 60)
                     .background(Color(uiColor: .tertiarySystemFill)).clipShape(RoundedRectangle(cornerRadius: 14)).accessibilityHidden(true)
+            } else {
+                Text(idea.emoji).font(.title).frame(width: 60, height: 60)
+                    .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 16)).accessibilityHidden(true)
             }
-            VStack(alignment: .leading, spacing: 5) {
-                Text(idea.title).font(.headline).lineLimit(3).foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(idea.title).font(.headline).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
                 if let subtitle = idea.subtitle, !subtitle.isEmpty { Text(subtitle).font(.subheadline).lineLimit(2).foregroundStyle(.secondary) }
                 if idea.place == nil, let source = idea.sources.first {
                     if ["pending", "resolving"].contains(source.status) { Text("Inspecting…").font(.caption).foregroundStyle(.secondary) }
@@ -100,7 +109,7 @@ struct HangoutIdeaRow: View {
                     else if source.status == "failed" { Text("Details unavailable").font(.caption).foregroundStyle(.secondary) }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
-        }.padding(14).frame(minHeight: 88)
+        }.padding(16).frame(minHeight: 92)
             .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
             .accessibilityElement(children: .combine)
     }
