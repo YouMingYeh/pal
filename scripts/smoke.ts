@@ -74,6 +74,17 @@ assert.equal(reminders.data?.length, 1, "Pal's tool saved exactly one real remin
 assert.equal(reminders.data?.[0].status, "scheduled");
 console.log("PASS: Eve + OpenAI read the group and saved a real reminder with a scoped database tool.");
 
+// Sending through PostgREST bypasses Next's immediate worker so only Cron can recover this job.
+const recoveredMessage = await alice.client.rpc("send_message", {
+  p_group_id: group.id,
+  p_body: "@Pal read the group and give one short sentence about the remaining unassigned item. Do not create another reminder.",
+  p_client_id: randomUUID(),
+});
+assert.ifError(recoveredMessage.error);
+const recovery = await db.from("agent_jobs").select("id").eq("message_id", recoveredMessage.data.id).single();
+assert.ifError(recovery.error);
+assert.ok(recovery.data?.id, "Direct Supabase send created a durable job without a backend dispatch.");
+
 await Promise.all(users.map(user => user.client.auth.signOut()));
 console.log("All test clients signed out. Waiting for server Cron delivery with no connected client.");
 await sleep(Math.max(1000, Date.parse(due) + 70000 - Date.now()));
@@ -85,5 +96,13 @@ const posted = await db.from("messages").select("id,body,created_at").eq("group_
 assert.ifError(posted.error);
 assert.equal(posted.data?.length, 1, "Reminder posts exactly one durable group message.");
 assert.ok(Date.parse(posted.data![0].created_at) >= Date.parse(due));
+const recovered = await db.from("agent_jobs").select("status").eq("id", recovery.data!.id).single();
+assert.ifError(recovered.error);
+assert.equal(recovered.data?.status, "completed", "Server recovery Cron completed the job without a connected client.");
+const recoveryReply = await db.from("messages").select("id").eq("group_id", group.id)
+  .eq("source_key", `job:${recovery.data!.id}`);
+assert.ifError(recoveryReply.error);
+assert.equal(recoveryReply.data?.length, 1, "Recovered task posts one durable Pal reply.");
 console.log("PASS: server reminder posted once after every client signed out.");
+console.log("PASS: server recovery Cron completed a directly queued Pal job after clients signed out.");
 console.log(`Demo group ${group.id}; invite ${group.invite_code}. Device credentials are saved only in ignored .env.demo.local.`);
