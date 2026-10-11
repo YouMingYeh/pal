@@ -2,7 +2,7 @@
 
 Native iOS group chat with Eve/OpenAI, Supabase, saved places, planning cards, reminders, and personal Google Calendar sync.
 
-Open ios/Pal.xcodeproj and run the Pal scheme. The checked-in public configuration points to https://pal-jade.vercel.app. Sign in with Apple, create or join a group, then invite a second member using the shareable link or invite code. Kardomo developer team: 6GAAMYMS72. App: com.pal.spike. Share extension: com.pal.spike.Share.
+Open ios/Pal.xcodeproj and run the Pal scheme. The checked-in public configuration points to https://pal-jade.vercel.app. Sign in with Apple, create a group with a name and optional photo, then invite a second member using its QR code or shareable link. Pasted invite links and codes remain available. Kardomo developer team: 6GAAMYMS72. App: com.pal.spike. Share extension: com.pal.spike.Share.
 
 ## Flow
 
@@ -10,12 +10,14 @@ Share a restaurant reel or paste a URL. Its source card progresses through inspe
 
 Confirmed plans schedule future 24-hour and 2-hour attendance reminders. Changes reset affected RSVPs and replace superseded reminders and Google event copies. The server posts reminder messages and sends APNs independently of the app. Notification taps open the relevant group card.
 
-Profile has a photo picker, editable name, Google Calendar connection and notification controls. Uploaded avatars are decoded, resized and stripped of camera metadata, then stored privately; authenticated group members receive temporary image links. Google uses only the app-created-calendar scope, creates a separate Pal calendar, and receives confirmed plans for members who RSVP Yes. Disconnecting stops updates and revokes credentials; existing Google events remain snapshots. Attending members can also review and save a manual copy through Apple's native Calendar editor. Group details contain editable preferences, availability, proactive suggestions, and personal group muting.
+The composer's plus button offers Photos, Camera and Audio. Draft attachments can be removed before sending; failed sends preserve their original client identity and file for retry. Uploaded photos are decoded, resized and stripped of camera metadata. Photos and voice messages stay in private storage, with temporary links available only to authenticated group members.
+
+Profile has a photo picker, editable name, Google Calendar connection and notification controls. Google uses only the app-created-calendar scope, creates a separate Pal calendar, and receives confirmed plans for members who RSVP Yes. Disconnecting stops updates and revokes credentials; existing Google events remain snapshots. Attending members can also review and save a manual copy through Apple's native Calendar editor. Group details contain members and invitations. Memory, poll creation and agent behavior controls stay out of the demo interface.
 
 ## Services
 
 - Supabase owns membership, source/place/poll/plan records, idempotent actions, private integration credentials and queues. Row-level security isolates groups.
-- Eve runs durable scoped OpenAI turns; every human message is eligible, bursts are coalesced, and an empty structured reply means silence. Agent tools cannot confirm, vote, RSVP, or book for a person.
+- Eve runs durable scoped OpenAI turns; every human message is eligible, bursts are coalesced, and an empty structured reply means silence. Group conversations and source-grounded preferences persist in Supabase across jobs. Pal reads recent discussion to follow context and tone; clear responses can update the speaker's own vote or RSVP. Agent tools cannot confirm, cancel or book a plan for a person.
 - Supadata inspects public Instagram/TikTok video content asynchronously. Extraction retains evidence and source metadata. Apple Maps search resolves candidates; uncertain places remain unpinned until corrected. Video prices and claims are distinct from current verified information.
 - Safe URL reading checks public DNS, redirects, IP pinning, response size and timeouts. Research prefers official menus and reservation pages; it does not invent table availability.
 - Minutely Supabase Cron delivers reminders and recovers jobs. The authenticated dispatch worker processes video inspection, Google Calendar copies, and APNs delivery.

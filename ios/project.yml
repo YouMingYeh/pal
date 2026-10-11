@@ -48,6 +48,8 @@ targets:
         PalAPIURL: $(PAL_API_URL)
         PalKeychainAccessGroup: $(AppIdentifierPrefix)com.pal.spike.shared
         PalPushEnvironment: $(PAL_PUSH_ENVIRONMENT)
+        NSCameraUsageDescription: Take a photo for a chat or scan a group invite.
+        NSMicrophoneUsageDescription: Record a voice message to send to your group.
         CFBundleURLTypes:
           - CFBundleURLName: com.pal.spike
             CFBundleURLSchemes: [pal]

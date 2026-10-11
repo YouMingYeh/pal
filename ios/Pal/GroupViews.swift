@@ -222,8 +222,6 @@ struct GroupCalendarView: View {
     @EnvironmentObject private var store: PalStore
     @State private var month = Date()
     @State private var selected = Calendar.current.startOfDay(for: Date())
-    @State private var addingPlan = false
-    @State private var addingReminder = false
     private var state: GroupState { store.states[group.id] ?? .empty }
     private var days: [Date?] {
         let calendar = Calendar.current
@@ -277,7 +275,6 @@ struct GroupCalendarView: View {
                         Image("DoodleCalendar").renderingMode(.template).resizable().scaledToFit()
                             .frame(width: 64, height: 64).foregroundStyle(.secondary).accessibilityHidden(true)
                         Text("Nothing planned for this day.").foregroundStyle(.secondary)
-                        if state.plans.isEmpty && state.reminders.isEmpty { Button("Create a plan") { addingPlan = true } }
                     }.frame(maxWidth: .infinity).padding(.vertical, 12)
                 }
                 ForEach(plans) { plan in planLink(plan) }
@@ -296,14 +293,6 @@ struct GroupCalendarView: View {
                 Section("Past and cancelled") { ForEach(past) { plan in planLink(plan) } }
             }
         }.navigationTitle("Calendar").navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            Menu {
-                Button("New plan", systemImage: "calendar.badge.plus") { addingPlan = true }
-                Button("New reminder", systemImage: "bell.badge") { addingReminder = true }
-            } label: { Image(systemName: "plus").accessibilityLabel("Add plan or reminder") }
-        }
-        .sheet(isPresented: $addingPlan) { NavigationStack { PlanEditor(group: group) } }
-        .sheet(isPresented: $addingReminder) { NavigationStack { ReminderEditor(group: group) } }
         .refreshable { await refresh() }.task { await refresh() }
     }
     private func planLink(_ plan: GroupPlan) -> some View {

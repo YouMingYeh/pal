@@ -4,9 +4,16 @@ import Security
 import UserNotifications
 import EventKitUI
 import ImageIO
+import AVFoundation
 @testable import Pal
 
 final class PalTests: XCTestCase {
+    @MainActor func testAutomaticPushFailureStaysInlineAndDoesNotInterruptNavigation() {
+        let store = PalStore()
+        store.recordPushRegistrationError("Temporary registration failure")
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.pushRegistrationIssue, "Temporary registration failure")
+    }
     @MainActor func testNavigationCancellationDoesNotPresentFailure() async {
         let store = PalStore()
         store.report(URLError(.cancelled))
@@ -38,6 +45,26 @@ final class PalTests: XCTestCase {
         XCTAssertFalse(poll.canVote(now: PalDate.date("2026-10-11T19:40:00Z")!))
     }
 
+    func testAttachmentDecodingRetainsCaptionAndHandlesUnavailableSignedURL() throws {
+        let message = try JSONDecoder().decode(ChatMessage.self, from: Data("""
+        {"id":"\(UUID())","group_id":"\(UUID())","role":"user","body":"Our dinner photo","created_at":"2026-10-11T20:00:00Z","attachments":[{"id":"\(UUID())","kind":"image","url":null,"mime_type":"image/jpeg","byte_size":128,"width":100,"height":80}]}
+        """.utf8))
+        XCTAssertEqual(message.attachments.count, 1)
+        XCTAssertNil(message.attachments.first?.url)
+        XCTAssertEqual(message.displayedBody(in: .empty), "Our dinner photo")
+    }
+    func testAttachmentFilenameCannotEscapeProtectedDraftDirectory() {
+        let draft = DraftAttachment(id: UUID(), kind: "image", filename: "../../private.jpg", mimeType: "image/jpeg", byteSize: 100, width: nil, height: nil, durationMS: nil)
+        XCTAssertThrowsError(try AttachmentFiles.url(for: draft))
+    }
+    func testLegacyOutboxDecodesWithoutAttachmentAndKeepsClientID() throws {
+        let client = UUID()
+        let draft = try JSONDecoder().decode(OutgoingMessage.self, from: Data("""
+        {"groupID":"\(UUID())","userID":"\(UUID())","clientID":"\(client)","body":"retry","failed":true}
+        """.utf8))
+        XCTAssertEqual(draft.clientID, client)
+        XCTAssertNil(draft.attachment)
+    }
     func testAvatarPhotoIsDownsampledAndConvertedBeforeUpload() throws {
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         let source = UIGraphicsImageRenderer(size: CGSize(width: 2400, height: 1200), format: format).image { context in
@@ -276,7 +303,7 @@ final class PalTests: XCTestCase {
         XCTAssertEqual(received, "APNs network unavailable")
         store.recordPushRegistrationError(received ?? "Missing callback")
         XCTAssertEqual(store.pushRegistrationIssue, "APNs network unavailable")
-        XCTAssertEqual(store.error, "Notifications could not register: APNs network unavailable")
+        XCTAssertNil(store.error)
         XCTAssertEqual(store.userID, owner)
     }
 
@@ -335,6 +362,66 @@ final class PalTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveNativeMediaTransport() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let email = env["PAL_TEST_EMAIL"], let password = env["PAL_TEST_PASSWORD"],
+              let bobEmail = env["PAL_TEST_BOB_EMAIL"], let bobPassword = env["PAL_TEST_BOB_PASSWORD"] else {
+            throw XCTSkip("Opt-in native media fixture credentials are supplied securely.")
+        }
+        let alice = PalStore(), bob = PalStore()
+        try await alice.authenticate(email: email, password: password, signUp: false)
+        try await bob.authenticate(email: bobEmail, password: bobPassword, signUp: false)
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let photo = UIGraphicsImageRenderer(size: CGSize(width: 720, height: 720), format: format).image { context in
+            UIColor.gray.setFill(); context.fill(CGRect(x: 0, y: 0, width: 720, height: 720))
+        }
+        let photoData = try XCTUnwrap(photo.pngData())
+        let avatarData = try PalAvatarImage.jpegData(from: photoData)
+        let creationID = UUID(), name = "Native media verification"
+        try await alice.createGroup(name: name, avatarData: avatarData, clientID: creationID)
+        let groupID = try XCTUnwrap(alice.path.first)
+        let group = try XCTUnwrap(alice.groups.first { $0.id == groupID })
+        let cleanup = XCTAttachment(string: "Native media QA group_id=" + groupID.uuidString)
+        cleanup.name = "Isolated native media group for cleanup"; cleanup.lifetime = .keepAlways; add(cleanup)
+        print("Native media QA group_id=" + groupID.uuidString)
+        XCTAssertNotNil(group.avatarURL)
+        try await alice.createGroup(name: name, avatarData: avatarData, clientID: creationID)
+        XCTAssertEqual(alice.path, [groupID])
+        try await bob.joinGroup(code: group.inviteCode)
+        let image = try AttachmentFiles.prepare(imageData: photoData)
+        defer { try? AttachmentFiles.remove(image) }
+        let photoClientID = UUID()
+        let sentPhoto = try await alice.sendAttachment(image, body: "Native photo verification", to: group, clientID: photoClientID, replyTo: nil)
+        let retriedPhoto = try await alice.sendAttachment(image, body: "Native photo verification", to: group, clientID: photoClientID, replyTo: nil)
+        XCTAssertEqual(sentPhoto.id, retriedPhoto.id)
+        XCTAssertEqual(sentPhoto.attachments.first?.kind, "image")
+        let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+        do {
+            let file = try AVAudioFile(forWriting: audioURL, settings: VoiceRecorder.settings)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 44_100))
+            buffer.frameLength = 44_100
+            let channel = try XCTUnwrap(buffer.floatChannelData?[0])
+            for frame in 0..<44_100 { channel[frame] = Float(sin(Double(frame) * 2 * .pi * 440 / 44_100) * 0.05) }
+            try file.write(from: buffer)
+        }
+        let audio = try await AttachmentFiles.prepareAudio(fileURL: audioURL)
+        defer { try? AttachmentFiles.remove(audio) }
+        let sentAudio = try await alice.sendAttachment(audio, body: "Native AAC verification", to: group, clientID: UUID(), replyTo: sentPhoto.id)
+        XCTAssertEqual(sentAudio.replyToID, sentPhoto.id)
+        XCTAssertEqual(sentAudio.attachments.first?.kind, "audio")
+        let received = try await bob.messages(in: group)
+        XCTAssertEqual(received.filter { $0.clientID == photoClientID }.count, 1)
+        for media in received.flatMap(\.attachments) {
+            let url = try XCTUnwrap(media.url)
+            let (data, response) = try await URLSession.shared.data(from: url)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            XCTAssertFalse(data.isEmpty)
+        }
+        try await attachScreenshot(of: NavigationStack { ChatView(group: group) }.environmentObject(bob).environment(\.scenePhase, .active), name: "Live native photo and AAC messages")
+    }
+
+    @MainActor
     func testLiveV1StateAndCards() async throws {
         let env = ProcessInfo.processInfo.environment
         guard let email = env["PAL_TEST_EMAIL"], let password = env["PAL_TEST_PASSWORD"],
@@ -373,9 +460,8 @@ final class PalTests: XCTestCase {
         try await attachScreenshot(of: NavigationStack { ChatView(group: group) }.environmentObject(store).environment(\.scenePhase, .active).preferredColorScheme(.dark), name: "Live v1 Pal chat dark")
         try await attachScreenshot(of: NavigationStack { GroupCalendarView(group: group) }.environmentObject(store), name: "Live v1 calendar")
         try await attachScreenshot(of: NavigationStack { GroupMapView(group: group) }.environmentObject(store), name: "Live v1 saved map")
-        try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store), name: "Live v1 profile and Google Calendar")
-        try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store).preferredColorScheme(.dark), name: "Live v1 profile dark")
-        try await attachScreenshot(of: NavigationStack { ReminderEditor(group: group) }.environmentObject(store), name: "Live v1 new reminder")
+        try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store), name: "Live v1 profile and Google Calendar", wait: 6)
+        try await attachScreenshot(of: NavigationStack { ProfileView() }.environmentObject(store).preferredColorScheme(.dark), name: "Live v1 profile dark", wait: 6)
         if let plan = state.plans.first(where: { $0.status != "cancelled" }) { try await attachScreenshot(of: NavigationStack { PlanDetailView(group: group, plan: plan) }.environmentObject(store), name: "Live v1 plan details") }
         let cards = messages.flatMap(\.cards)
         try await attachScreenshot(of: NavigationStack {
@@ -388,7 +474,7 @@ final class PalTests: XCTestCase {
     }
 
     @MainActor
-    private func attachScreenshot<Content: View>(of view: Content, name: String) async throws {
+    private func attachScreenshot<Content: View>(of view: Content, name: String, wait: Double = 3) async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = try XCTUnwrap(scene.windows.first { $0.isKeyWindow })
         let previous = window.rootViewController
@@ -396,7 +482,7 @@ final class PalTests: XCTestCase {
         window.rootViewController = controller
         defer { window.rootViewController = previous }
         controller.view.layoutIfNeeded()
-        try await Task.sleep(for: .seconds(3))
+        try await Task.sleep(for: .seconds(wait))
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }

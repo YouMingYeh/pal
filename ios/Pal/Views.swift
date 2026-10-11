@@ -1,5 +1,6 @@
 import SwiftUI
 import AuthenticationServices
+import PhotosUI
 
 /// Floating controls use native Liquid Glass when available; increased-contrast preferences keep an opaque surface.
 private struct PalGlass: ViewModifier {
@@ -23,6 +24,28 @@ private struct ChatScrollEdges: ViewModifier {
     }
 }
 
+private struct ChatNavigationSurface: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) { content.toolbarBackground(.hidden, for: .navigationBar) }
+        else { content.toolbarBackground(.ultraThinMaterial, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar) }
+    }
+}
+
+private struct PalSendButton: View {
+    var disabled: Bool
+    var action: () -> Void
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @ViewBuilder var body: some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            Button(action: action) { Image(systemName: "arrow.up").font(.body.weight(.semibold)).frame(width: 25, height: 35) }
+                .buttonStyle(.glassProminent).buttonBorderShape(.circle).disabled(disabled).accessibilityLabel("Send message")
+        } else {
+            Button(action: action) { Image(systemName: "arrow.up").font(.body.weight(.semibold)).foregroundStyle(disabled ? Color.secondary : PalTheme.onInk).frame(width: 44, height: 44).background(disabled ? Color(uiColor: .secondarySystemBackground) : PalTheme.ink, in: Circle()) }
+                .buttonStyle(.plain).disabled(disabled).accessibilityLabel("Send message")
+        }
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var store: PalStore
     @Environment(\.scenePhase) private var phase
@@ -35,7 +58,10 @@ struct RootView: View {
                 guard store.isSignedIn else { return }
                 do { try await store.loadProfile(); try await store.loadGroups(); await store.acceptPendingInvite(); await store.acceptPendingNotification()
                     if store.profile?.notificationPreferences?.enabled != false { await PalNotifications.registerIfAuthorized() }
-                    if store.profile?.notificationPreferences?.enabled != false, let token = UserDefaults.standard.string(forKey: "PalDeviceToken") { try await store.registerDevice(token: token) }
+                    if store.profile?.notificationPreferences?.enabled != false, let token = UserDefaults.standard.string(forKey: "PalDeviceToken") {
+                        do { try await store.registerDevice(token: token) }
+                        catch { if !PalCancellation.isCancellation(error) { store.recordPushRegistrationError(error.localizedDescription) } }
+                    }
                 } catch { store.report(error) }
             }
             .onChange(of: phase) { _, value in
@@ -130,9 +156,6 @@ struct GroupsView: View {
     @State private var create = false
     @State private var join = false
     @State private var profile = false
-    @State private var name = ""
-    @State private var code = ""
-    @State private var busy = false
     var body: some View {
         NavigationStack(path: $store.path) {
             List {
@@ -140,31 +163,31 @@ struct GroupsView: View {
                 ForEach(store.groups) { group in
                     NavigationLink(value: group.id) {
                         HStack(spacing: 12) {
-                            AvatarView(name: group.name, size: 50)
+                            AvatarView(name: group.name, url: group.avatarURL, size: 50)
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack { Text(group.name).font(.headline); Spacer(); if let date = (group.lastMessage?.createdAt).flatMap(PalDate.date) { Text(date, style: .time).font(.caption).foregroundStyle(.secondary) } }
                                 HStack { Text(group.lastMessage?.body ?? "Start a conversation").font(.subheadline).foregroundStyle(.secondary).lineLimit(2); Spacer(); if let unread = group.unreadCount, unread > 0 { Text("\(unread)").font(.caption.bold()).foregroundStyle(PalTheme.onInk).padding(6).background(PalTheme.ink, in: Circle()).accessibilityLabel("\(unread) unread messages") } }
                             }
                         }.padding(.vertical, 5)
-                    }
+                    }.listRowSeparator(.hidden)
                 }
-            }.listStyle(.plain).navigationTitle("Chats")
+            }.listStyle(.plain).listRowSeparator(.hidden).navigationTitle("Pal").navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
                 .navigationDestination(for: UUID.self) { id in if let group = store.groups.first(where: { $0.id == id }) { ChatView(group: group) } }
                 .toolbar {
+                    ToolbarItem(placement: .principal) { Text("Pal").font(.headline) }
                     ToolbarItem(placement: .topBarLeading) { Button { profile = true } label: { AvatarView(name: store.profile?.displayName ?? "Me", url: store.profile?.avatarURL) }.accessibilityLabel("Profile and settings") }
                     ToolbarItem(placement: .topBarTrailing) { Menu { Button("New group", systemImage: "square.and.pencil") { create = true }; Button("Join group", systemImage: "person.badge.plus") { join = true } } label: { Image(systemName: "square.and.pencil").accessibilityLabel("New chat") } }
                 }
                 .refreshable { await refresh() }.task { await refresh() }
                 .onChange(of: store.path) { _, path in if path.isEmpty { Task { await refresh() } } }
                 .sheet(isPresented: $profile) { NavigationStack { ProfileView() } }
-                .sheet(isPresented: $create) { editSheet("New group", field: "Group name", value: $name) { try await store.createGroup(name: name); create = false; name = "" } }
-                .sheet(isPresented: $join) { editSheet("Join group", field: "Invite code", value: $code) { try await store.joinGroup(code: code); join = false; code = "" } }
+                .sheet(isPresented: $create) { GroupCreateView() }
+                .sheet(isPresented: $join) { GroupJoinView() }
         }
     }
     private func refresh() async { do { try await store.loadGroups() } catch { store.report(error) } }
-    private func editSheet(_ title: String, field: String, value: Binding<String>, work: @escaping () async throws -> Void) -> some View {
-        NavigationStack { Form { TextField(field, text: value).textInputAutocapitalization(.never); Button(title) { busy = true; Task { defer { busy = false }; do { try await work() } catch { store.report(error) } } }.disabled(busy || value.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty); if busy { ProgressView() } }.navigationTitle(title).navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { create = false; join = false }.disabled(busy) } } }
-    }
+
 }
 
 struct ChatView: View {
@@ -173,15 +196,17 @@ struct ChatView: View {
     @Environment(\.scenePhase) private var phase
     @State private var messages: [ChatMessage] = []
     @State private var draft = ""
+    @State private var attachment: DraftAttachment?
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showingPhotos = false
+    @State private var showingCamera = false
+    @State private var showingAudio = false
+    @State private var processingPhoto = false
+    @State private var photoPreparationID = UUID()
     @State private var reply: ChatMessage?
-    @State private var remembered: ChatMessage?
     @State private var details = false
     @State private var calendar = false
     @State private var map = false
-    @State private var newReminder = false
-    @State private var newPlan = false
-    @State private var findPlace = false
-    @State private var newMemory = false
     @State private var routeCard: MessageCard?
     @State private var pollingError: String?
     @State private var lastRead: UUID?
@@ -193,21 +218,27 @@ struct ChatView: View {
                 transcript
             }.defaultScrollAnchor(.bottom).scrollDismissesKeyboard(.interactively).modifier(ChatScrollEdges())
                 .onChange(of: messages.last?.id) { _, id in if let id { proxy.scrollTo(id, anchor: .bottom) } }
-                .safeAreaInset(edge: .bottom) { composer }
+                .safeAreaInset(edge: .bottom, spacing: 0) { composer }
         }.navigationTitle(group.name).navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
+            .modifier(ChatNavigationSurface())
             .toolbar {
-                ToolbarItem(placement: .principal) { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, size: 28); Text(group.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityLabel("Group details") }
+                ToolbarItem(placement: .principal) { Button { details = true } label: { HStack(spacing: 8) { AvatarView(name: group.name, url: group.avatarURL, size: 28); Text(group.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityLabel("Group details") }
                 ToolbarItem(placement: .topBarTrailing) { HStack { Button { calendar = true } label: { Image(systemName: "calendar") }.accessibilityLabel("Group calendar"); Button { map = true } label: { Image(systemName: "map") }.accessibilityLabel("Saved places") } }
+            }
+            .photosPicker(isPresented: $showingPhotos, selection: $selectedPhoto, matching: .images)
+            .fullScreenCover(isPresented: $showingCamera) { CameraCapture(onCapture: { data in Task { await preparePhoto(data) } }, onError: { store.report($0) }) }
+            .sheet(isPresented: $showingAudio) { AudioRecorderView(onCapture: { replaceAttachment($0) }, onError: { store.report($0) }) }
+            .task(id: selectedPhoto) {
+                guard let item = selectedPhoto else { return }
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else { throw PalFailure(message: "Unable to read this photo.") }
+                    try Task.checkCancellation()
+                    await preparePhoto(data)
+                } catch { store.report(error) }
             }
             .sheet(isPresented: $details) { NavigationStack { GroupDetailsView(group: group) } }
             .navigationDestination(isPresented: $calendar) { GroupCalendarView(group: group) }
             .navigationDestination(isPresented: $map) { GroupMapView(group: group) }
-            .sheet(isPresented: $newReminder) { NavigationStack { ReminderEditor(group: group) } }
-            .sheet(isPresented: $newPlan) { NavigationStack { PlanEditor(group: group) } }
-            .sheet(isPresented: $findPlace) { NavigationStack { PlaceSearchView(group: group).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { findPlace = false } } } } }
-            .sheet(isPresented: $newMemory) { NavigationStack { MemoryEditor(group: group) } }
-            .sheet(item: $remembered) { message in NavigationStack { MemoryEditor(group: group, sourceMessage: message) } }
             .sheet(item: $routeCard) { card in NavigationStack { PalCardView(group: group, card: card).padding().navigationTitle("Details").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { routeCard = nil } } } } }
             .onChange(of: store.requestedEntity) { _, card in if let card { routeCard = card; store.requestedEntity = nil } }
             .task(id: phase) {
@@ -223,22 +254,46 @@ struct ChatView: View {
                 timelineRow(message, at: index)
             }
             ForEach(pending) { item in
-                HStack { Spacer(minLength: 44); VStack(alignment: .trailing, spacing: 4) { Text(item.body).padding(12).foregroundStyle(PalTheme.onInk).background(PalTheme.ink.opacity(0.6), in: RoundedRectangle(cornerRadius: 20)); if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(.red).frame(minHeight: 44) } else { Text("Sending…").font(.caption).foregroundStyle(.secondary) } } }.id(item.id)
+                HStack { Spacer(minLength: 44); VStack(alignment: .trailing, spacing: 4) { if let media = item.attachment { DraftMediaPreview(draft: media, onRemove: nil) }; if !item.body.isEmpty { Text(item.body).padding(12).foregroundStyle(PalTheme.onInk).background(PalTheme.ink.opacity(0.6), in: RoundedRectangle(cornerRadius: 20)) }; if item.failed { Button("Not sent · Tap to retry") { Task { await store.retry(item, group: group); await refresh() } }.font(.caption).foregroundStyle(.red).frame(minHeight: 44) } } }.id(item.id)
             }
         }.padding(16)
     }
     private var composer: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 8) {
             if let pollingError { Text(pollingError).font(.caption).foregroundStyle(.red) }
-            if let reply { HStack { Text("Reply to \(memberName(reply)): \(reply.body)").font(.caption).lineLimit(1); Spacer(); Button { self.reply = nil } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Cancel reply") }.padding(.horizontal, 20) }
+            if let reply { HStack { Text("Reply to \(memberName(reply)): \(reply.body)").font(.caption).lineLimit(1); Spacer(); Button { self.reply = nil } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Cancel reply").frame(minWidth: 44, minHeight: 44) }.padding(.horizontal, 15) }
+            if let attachment { DraftMediaPreview(draft: attachment, onRemove: removeAttachment).padding(.horizontal, 15) }
+            if processingPhoto { ProgressView("Preparing photo…").font(.caption) }
             HStack(alignment: .bottom, spacing: 10) {
-                Menu { Button("Set reminder", systemImage: "bell") { newReminder = true }; Button("Make a plan", systemImage: "calendar.badge.plus") { newPlan = true }; Button("Find a place", systemImage: "mappin.and.ellipse") { findPlace = true }; Button("Save a preference", systemImage: "bookmark") { newMemory = true } } label: { Image(systemName: "plus").font(.title3.weight(.medium)).frame(width: 44, height: 44).foregroundStyle(.primary).modifier(PalGlass(cornerRadius: 22)) }.accessibilityLabel("Add to chat")
-                HStack(alignment: .bottom, spacing: 0) {
-                    TextField("Message", text: $draft, axis: .vertical).lineLimit(1...5).padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 12).accessibilityLabel("Message")
-                    Button { sendDraft() } label: { Image(systemName: "arrow.up").font(.body.weight(.semibold)).foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary : PalTheme.onInk).frame(width: 32, height: 32).background(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.clear : PalTheme.ink, in: Circle()).frame(width: 44, height: 44) }.buttonStyle(.plain).accessibilityLabel("Send message").disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }.modifier(PalGlass(cornerRadius: 25))
-            }.padding(.horizontal, 14).padding(.vertical, 8)
+                Menu {
+                    Button("Photos", systemImage: "photo") { showingPhotos = true }
+                    Button("Camera", systemImage: "camera") { showingCamera = true }
+                    Button("Audio", systemImage: "waveform") { showingAudio = true }
+                } label: { Image(systemName: "plus").font(.title3.weight(.medium)).frame(width: 44, height: 44).foregroundStyle(.primary).modifier(PalGlass(cornerRadius: 22)) }.accessibilityLabel("Add attachment").disabled(processingPhoto)
+                TextField("Message", text: $draft, axis: .vertical).font(.body).lineLimit(1...5).padding(12).modifier(PalGlass(cornerRadius: 25)).accessibilityLabel("Message")
+                PalSendButton(disabled: processingPhoto || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachment == nil), action: sendDraft)
+            }.padding(.horizontal, 15).padding(.bottom, 10)
         }
+    }
+    private func preparePhoto(_ data: Data) async {
+        let preparationID = UUID()
+        photoPreparationID = preparationID
+        processingPhoto = true
+        defer { if photoPreparationID == preparationID { processingPhoto = false } }
+        do {
+            let prepared = try await Task.detached(priority: .userInitiated) { try AttachmentFiles.prepare(imageData: data) }.value
+            if Task.isCancelled || photoPreparationID != preparationID { try? AttachmentFiles.remove(prepared); return }
+            replaceAttachment(prepared)
+        } catch { store.report(error) }
+    }
+    private func replaceAttachment(_ new: DraftAttachment) {
+        if let attachment { try? AttachmentFiles.remove(attachment) }
+        attachment = new
+    }
+    private func removeAttachment() {
+        photoPreparationID = UUID(); processingPhoto = false
+        if let attachment { try? AttachmentFiles.remove(attachment) }
+        attachment = nil
     }
     @ViewBuilder private func timelineRow(_ message: ChatMessage, at index: Int) -> some View {
         let previous = index > 0 ? messages[index - 1] : nil
@@ -251,7 +306,7 @@ struct ChatView: View {
     @ViewBuilder private func messageRow(_ message: ChatMessage, showSender: Bool) -> some View {
         let mine = message.senderID == store.userID && message.role == "user"
         if message.role == "system" {
-            Text(message.body).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.horizontal, 18).padding(.vertical, 6)
+            if let body = message.displayedBody(in: state) { Text(body).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.horizontal, 18).padding(.vertical, 6) }
             ForEach(message.cards) { PalCardView(group: group, card: $0) }
         } else { HStack(alignment: .bottom, spacing: 7) {
             if mine { Spacer(minLength: 44) }
@@ -262,6 +317,7 @@ struct ChatView: View {
                     Text(PalText.linked(body)).textSelection(.enabled).tint(mine ? PalTheme.onInk : PalTheme.ink).padding(.horizontal, 14).padding(.vertical, 10).foregroundStyle(mine ? PalTheme.onInk : PalTheme.ink).background(mine ? PalTheme.ink : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                         .contextMenu { messageMenu(message, mine: mine) }
                 }
+                ForEach(message.attachments) { media in MessageAttachmentView(attachment: media, onRetry: { Task { await refresh() } }).contextMenu { messageMenu(message, mine: mine) } }
                 ForEach(message.cards) { PalCardView(group: group, card: $0).contextMenu { messageMenu(message, mine: mine) } }
                 let reactions = state.reactions.filter { $0.messageID == message.id }
                 if !reactions.isEmpty { HStack(spacing: 4) { ForEach(Array(Set(reactions.map(\.emoji))).sorted(), id: \.self) { emoji in let count = reactions.filter { $0.emoji == emoji }.count; let selected = reactions.contains { $0.emoji == emoji && $0.userID == store.userID }; Button { react(emoji, to: message) } label: { Text("\(emoji) \(count)").font(.caption).padding(.horizontal, 9).padding(.vertical, 5).background(selected ? PalTheme.ink.opacity(0.12) : Color(uiColor: .tertiarySystemFill), in: Capsule()) }.buttonStyle(.plain).frame(minHeight: 44).accessibilityLabel("\(emoji), \(count) reactions").accessibilityValue(selected ? "You reacted" : "").accessibilityHint(selected ? "Remove your reaction" : "Add your reaction") } } }
@@ -273,14 +329,20 @@ struct ChatView: View {
         ControlGroup { ForEach(["❤️", "👍", "😂", "👀"], id: \.self) { emoji in Button { react(emoji, to: message) } label: { Text(emoji) }.accessibilityLabel("React \(emoji)") } }.controlGroupStyle(.palette)
         Button("Reply", systemImage: "arrowshape.turn.up.left") { reply = message }
         Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.body }
-        if mine { Button("Save to memory", systemImage: "bookmark") { remembered = message } }
     }
-    private func sendDraft() { let text = draft.trimmingCharacters(in: .whitespacesAndNewlines); guard !text.isEmpty else { return }; let replyID = reply?.id; draft = ""; reply = nil; Task { await store.queue(text, group: group, replyTo: replyID); await refresh() } }
+    private func sendDraft() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !processingPhoto, !text.isEmpty || attachment != nil else { return }
+        let media = attachment, replyID = reply?.id
+        draft = ""; reply = nil; attachment = nil; selectedPhoto = nil
+        Task { await store.queue(text, group: group, replyTo: replyID, attachment: media); await refresh() }
+    }
     private func react(_ emoji: String, to message: ChatMessage) { Task { do { try await store.mutate(group, action: "reaction.toggle", data: ["message_id": .string(message.id.uuidString), "emoji": .string(emoji)]) } catch { store.report(error) } } }
     private func refresh() async {
         do {
             let loaded = try await store.messages(in: group)
             try Task.checkCancellation()
+            store.reconcileOutgoing(with: loaded)
             messages = loaded
             try await store.loadState(group)
             if let id = loaded.last?.id, lastRead != id, phase == .active {

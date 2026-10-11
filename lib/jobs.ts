@@ -1,7 +1,7 @@
 import { Client } from "eve/client";
 import { admin, checked, env } from "./db";
 import { jobScope, type Job } from "./job-scope";
-import { agentReply, sharedUrls } from "./validation";
+import { agentReply, parsedPalReply, sharedUrls } from "./validation";
 import { assertPublicURL } from "./research";
 
 export async function dispatchJobs() {
@@ -15,6 +15,7 @@ export async function dispatchJobs() {
       });
       let sessionId = job.result ? JSON.parse(job.result).sessionId as string | undefined : undefined;
       let body: string | undefined;
+      let emotion = "fier";
       let structured: unknown;
       if (sessionId) {
         // shortcut: one turn per job, recover its durable stream instead of sending the request twice.
@@ -49,11 +50,15 @@ export async function dispatchJobs() {
         structured = result.data;
       }
       const oldSession = job.result && JSON.parse(job.result).format !== "v1";
-      if (structured !== undefined) body = agentReply.parse(structured).reply.trim();
+      if (structured !== undefined) {
+        const reply = parsedPalReply(structured);
+        body = reply.body;
+        emotion = reply.emotion;
+      }
       else if (!oldSession) throw new Error("Pal did not return a structured result.");
-      checked(await db.rpc("complete_agent_job", {
-        p_job_id: job.id, p_attempt: job.attempts, p_body: body,
-        p_result: JSON.stringify({ sessionId, format: "v1" }),
+      checked(await db.rpc("complete_agent_job_with_emotion", {
+        p_job_id: job.id, p_attempt: job.attempts, p_body: body, p_emotion: emotion,
+        p_result: JSON.stringify({ sessionId, format: "v1", emotion }),
       }));
     } catch (error) {
       // Terminal task failures must create a new Eve session on a future retry.

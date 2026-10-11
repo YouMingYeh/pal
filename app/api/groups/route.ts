@@ -1,11 +1,12 @@
 import { authenticated, route } from "../../../lib/http";
 import { checked } from "../../../lib/db";
 import { groupInput } from "../../../lib/validation";
+import { createGroupWithPhoto, groupCreationForm, groupCreationInput, signedGroupAvatar } from "../../../lib/group-avatar";
 
 export function GET(request: Request) {
   return route(async () => {
     const { db, user } = await authenticated(request);
-    const groups = checked(await db.from("groups").select("id,name,invite_code").order("created_at"));
+    const groups = checked(await db.from("groups").select("id,name,invite_code,creator_id,avatar_path").order("created_at"));
     if (!groups?.length) return Response.json({ groups: [] });
     const memberships = checked(await db.from("group_members").select("group_id,last_read_at")
       .eq("user_id", user.id).in("group_id", groups.map(group => group.id)));
@@ -22,7 +23,7 @@ export function GET(request: Request) {
           .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle(), unreadQuery,
       ]);
       checked(latest); checked(unread);
-      return { ...group, last_read_at: lastReadAt, last_message: latest.data, unread_count: unread.count ?? 0 };
+      return { ...await signedGroupAvatar(group), last_read_at: lastReadAt, last_message: latest.data, unread_count: unread.count ?? 0 };
     }));
     return Response.json({ groups: summaries });
   });
@@ -30,8 +31,17 @@ export function GET(request: Request) {
 
 export function POST(request: Request) {
   return route(async () => {
-    const { db } = await authenticated(request);
-    const { name } = groupInput.parse(await request.json());
-    return Response.json({ group: checked(await db.rpc("create_group", { p_name: name })) }, { status: 201 });
+    const { db, user } = await authenticated(request);
+    if (request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data;")) {
+      const { input, file } = await groupCreationForm(request);
+      return Response.json({ group: await createGroupWithPhoto(user.id, input, file) }, { status: 201 });
+    }
+    const body = await request.json();
+    if (body?.client_id !== undefined) {
+      const input = groupCreationInput.parse(body);
+      return Response.json({ group: await createGroupWithPhoto(user.id, input) }, { status: 201 });
+    }
+    const { name } = groupInput.parse(body);
+    return Response.json({ group: await signedGroupAvatar(checked(await db.rpc("create_group", { p_name: name }))) }, { status: 201 });
   });
 }

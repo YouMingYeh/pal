@@ -8,12 +8,16 @@
 
 /* Begin PBXBuildFile section */
 		10C3BBC075B35D721480EADD /* NativeServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F75E356BE8C70C232165D3C /* NativeServices.swift */; };
+		1CD0DE19FB25A806F7AFEDBD /* GroupAccessViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4451B761072B9C27BA52A44D /* GroupAccessViews.swift */; };
 		1EE09B99987D4EA02BFF335C /* SettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DADA4FFAEAFA3D5257E7643D /* SettingsViews.swift */; };
+		24D28BBFC7BDE1C8C0288D49 /* GroupAccessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7796669AF9D046DE352DCD3 /* GroupAccessTests.swift */; };
 		294FF5CD7D1120FBBE94FD30 /* GroupViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6B05588AFFC774B98F506B /* GroupViews.swift */; };
 		2B15065AAFA4FEE9C28E7EF9 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */; };
 		2E134CFE129D6CFA85515D86 /* PalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D7C60E655D843D1BED0D0B2 /* PalTests.swift */; };
 		3A76AFF126F29A8DDCFEFD6A /* PalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3199B39DF7A2E23079D49E8 /* PalModels.swift */; };
+		54BA4FB3AB449CFF1C0F9498 /* MediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D272BA7F13EC017888610A1D /* MediaViews.swift */; };
 		554615F5DDDF6661E12A3CA5 /* PalTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6EBAB0DEB6EF61AA51B1720 /* PalTheme.swift */; };
+		5A16361965046D382CE31737 /* MediaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BA5B696C4F2C7FBBF761292 /* MediaTests.swift */; };
 		661649F05F2D1060FA1473D7 /* PalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6BC3535EFC4889BBE81CF1F /* PalStore.swift */; };
 		6986A9D161407603CD6B4CF1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EEF13EE303B074658390805C /* Assets.xcassets */; };
 		69A2FD4A03F83918343D2571 /* SharePayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98BBDEC957AADA768E424224 /* SharePayload.swift */; };
@@ -28,6 +32,8 @@
 		C5E052831ED7696DED5888B8 /* PalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3199B39DF7A2E23079D49E8 /* PalModels.swift */; };
 		DD1EAB252B10433ED52B6AD6 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91916F06B448D4DD9F4899AC /* Views.swift */; };
 		DE32C06D20240D56DD61F281 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E1E2F9EF8B322C89126EA /* Session.swift */; };
+		DF5D6BCC2EC4D3D51E82B982 /* Attachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18C60A2C804E3A9DEF573F8C /* Attachments.swift */; };
+		E230B2750A8FB1AEFC986800 /* Attachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18C60A2C804E3A9DEF573F8C /* Attachments.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -63,8 +69,11 @@
 
 /* Begin PBXFileReference section */
 		0B6B05588AFFC774B98F506B /* GroupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupViews.swift; sourceTree = "<group>"; };
+		18C60A2C804E3A9DEF573F8C /* Attachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Attachments.swift; sourceTree = "<group>"; };
 		284C3A207436DC0563A05224 /* AppleCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleCalendar.swift; sourceTree = "<group>"; };
 		3F75E356BE8C70C232165D3C /* NativeServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeServices.swift; sourceTree = "<group>"; };
+		4451B761072B9C27BA52A44D /* GroupAccessViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupAccessViews.swift; sourceTree = "<group>"; };
+		4BA5B696C4F2C7FBBF761292 /* MediaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTests.swift; sourceTree = "<group>"; };
 		6ECB52FD5C6EA8F4E85582B5 /* Pal.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Pal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		76582FE248D91909FDC58AFF /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		8D7C60E655D843D1BED0D0B2 /* PalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalTests.swift; sourceTree = "<group>"; };
@@ -74,6 +83,7 @@
 		A4A10EFFE5BF0968495B2284 /* PalTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A57E1E2F9EF8B322C89126EA /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
 		A6BC3535EFC4889BBE81CF1F /* PalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalStore.swift; sourceTree = "<group>"; };
+		A7796669AF9D046DE352DCD3 /* GroupAccessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupAccessTests.swift; sourceTree = "<group>"; };
 		A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
 		B43FC484ABC09349014E7F82 /* Share.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Share.entitlements; sourceTree = "<group>"; };
 		B6EBAB0DEB6EF61AA51B1720 /* PalTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalTheme.swift; sourceTree = "<group>"; };
@@ -82,6 +92,7 @@
 		C6935B627C04EB82CE57CE0D /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		CA03BD836188F8D6E6DE8284 /* Cards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cards.swift; sourceTree = "<group>"; };
 		CF1F6907C77B7FC03D7D47D9 /* Pal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pal.entitlements; sourceTree = "<group>"; };
+		D272BA7F13EC017888610A1D /* MediaViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaViews.swift; sourceTree = "<group>"; };
 		DADA4FFAEAFA3D5257E7643D /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
 		E3199B39DF7A2E23079D49E8 /* PalModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalModels.swift; sourceTree = "<group>"; };
 		E5F2FA3E3E82587B666C8E4A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -113,6 +124,8 @@
 		15997A1802113B8C59694A91 /* PalTests */ = {
 			isa = PBXGroup;
 			children = (
+				A7796669AF9D046DE352DCD3 /* GroupAccessTests.swift */,
+				4BA5B696C4F2C7FBBF761292 /* MediaTests.swift */,
 				8D7C60E655D843D1BED0D0B2 /* PalTests.swift */,
 			);
 			path = PalTests;
@@ -146,8 +159,10 @@
 				A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */,
 				EEF13EE303B074658390805C /* Assets.xcassets */,
 				CA03BD836188F8D6E6DE8284 /* Cards.swift */,
+				4451B761072B9C27BA52A44D /* GroupAccessViews.swift */,
 				0B6B05588AFFC774B98F506B /* GroupViews.swift */,
 				E5F2FA3E3E82587B666C8E4A /* Info.plist */,
+				D272BA7F13EC017888610A1D /* MediaViews.swift */,
 				3F75E356BE8C70C232165D3C /* NativeServices.swift */,
 				CF1F6907C77B7FC03D7D47D9 /* Pal.entitlements */,
 				9C88929C3861C7A8FEB94B9D /* PalApp.swift */,
@@ -162,6 +177,7 @@
 		FC30335816C161D4EDB88729 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				18C60A2C804E3A9DEF573F8C /* Attachments.swift */,
 				B6EBAB0DEB6EF61AA51B1720 /* PalTheme.swift */,
 				A57E1E2F9EF8B322C89126EA /* Session.swift */,
 			);
@@ -288,8 +304,11 @@
 			files = (
 				B906E4629C5D7A2A1FF83DCE /* AppleCalendar.swift in Sources */,
 				2B15065AAFA4FEE9C28E7EF9 /* AppleSignIn.swift in Sources */,
+				E230B2750A8FB1AEFC986800 /* Attachments.swift in Sources */,
 				C0F4634D5863364F9CC77957 /* Cards.swift in Sources */,
+				1CD0DE19FB25A806F7AFEDBD /* GroupAccessViews.swift in Sources */,
 				294FF5CD7D1120FBBE94FD30 /* GroupViews.swift in Sources */,
+				54BA4FB3AB449CFF1C0F9498 /* MediaViews.swift in Sources */,
 				10C3BBC075B35D721480EADD /* NativeServices.swift in Sources */,
 				7460D1FA42AD213B00A903CD /* PalApp.swift in Sources */,
 				3A76AFF126F29A8DDCFEFD6A /* PalModels.swift in Sources */,
@@ -305,6 +324,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DF5D6BCC2EC4D3D51E82B982 /* Attachments.swift in Sources */,
 				C5E052831ED7696DED5888B8 /* PalModels.swift in Sources */,
 				8F8FCE6561D85B1DDFF7B026 /* PalStore.swift in Sources */,
 				A23128CD8D82D4C7F0774CE7 /* PalTheme.swift in Sources */,
@@ -318,6 +338,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				24D28BBFC7BDE1C8C0288D49 /* GroupAccessTests.swift in Sources */,
+				5A16361965046D382CE31737 /* MediaTests.swift in Sources */,
 				2E134CFE129D6CFA85515D86 /* PalTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

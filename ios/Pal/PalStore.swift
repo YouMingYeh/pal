@@ -18,6 +18,7 @@ final class PalStore: ObservableObject {
 
     private var pendingNotification: [AnyHashable: Any]? = UserDefaults.standard.dictionary(forKey: "PalPendingNotification")
     private var refreshTask: Task<StoredSession, Error>?
+    private var registeredDeviceKeys = Set<String>()
 
     var userID: UUID? { storedSession?.session.user.id }
     var isSignedIn: Bool { storedSession != nil }
@@ -140,11 +141,44 @@ final class PalStore: ObservableObject {
         groups = try JSONDecoder().decode(Response.self, from: await api("/api/groups")).groups
     }
 
-    func createGroup(name: String) async throws {
+    func createGroup(name: String, avatarData: Data? = nil, clientID: UUID = UUID()) async throws {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.utf16.count <= 80 else { throw PalFailure(message: "Use a group name with 1 to 80 characters.") }
+        let data: Data
+        if let avatarData {
+            guard !avatarData.isEmpty, avatarData.count <= 2 * 1024 * 1024 else { throw PalFailure(message: "Choose a photo smaller than 2 MB.") }
+            data = try await multipart(path: "/api/groups", fields: ["name": name, "client_id": clientID.uuidString], file: avatarData, filename: "group.jpg", mimeType: "image/jpeg")
+        } else { data = try await api("/api/groups", method: "POST", body: ["name": name, "client_id": clientID.uuidString]) }
         struct Response: Decodable { let group: ChatGroup }
-        let group = try JSONDecoder().decode(Response.self, from: await api("/api/groups", method: "POST", body: ["name": name.trimmingCharacters(in: .whitespacesAndNewlines)] )).group
+        let group = try JSONDecoder().decode(Response.self, from: data).group
         try await loadGroups()
         path = [group.id]
+    }
+
+    private func multipart(path: String, fields: [String: String], file: Data, filename: String, mimeType: String) async throws -> Data {
+        let owner = userID
+        let boundary = "PalMedia-" + UUID().uuidString
+        var body = Data()
+        for (name, value) in fields.sorted(by: { $0.key < $1.key }) {
+            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
+        }
+        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\nContent-Type: \(mimeType)\r\n\r\n".utf8))
+        body.append(file); body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        let data = try await request(base: configuredURL("PalAPIURL"), path: path, method: "POST", token: token(), rawBody: body, contentType: "multipart/form-data; boundary=\(boundary)")
+        guard userID == owner else { throw CancellationError() }
+        return data
+    }
+
+    @discardableResult
+    func sendAttachment(_ attachment: DraftAttachment, body: String, to group: ChatGroup, clientID: UUID, replyTo: UUID?) async throws -> ChatMessage {
+        let file = try Data(contentsOf: AttachmentFiles.url(for: attachment))
+        guard file.count == attachment.byteSize, file.count > 0,
+              file.count <= (attachment.kind == "image" ? 2 : 4) * 1024 * 1024 else { throw PalFailure(message: "This attachment is unavailable. Please select it again.") }
+        var fields = ["body": body, "client_id": clientID.uuidString, "kind": attachment.kind]
+        if let replyTo { fields["reply_to_id"] = replyTo.uuidString }
+        let data = try await multipart(path: "/api/groups/\(group.id)/attachments", fields: fields, file: file, filename: attachment.filename, mimeType: attachment.mimeType)
+        struct Response: Decodable { let message: ChatMessage }
+        return try JSONDecoder().decode(Response.self, from: data).message
     }
 
     func joinGroup(code: String) async throws {
@@ -218,18 +252,23 @@ final class PalStore: ObservableObject {
 
     func registerDevice(token: String) async throws {
         let environment = Bundle.main.object(forInfoDictionaryKey: "PalPushEnvironment") as? String ?? "sandbox"
+        guard let owner = userID else { throw PalFailure(message: "Sign in to enable notifications.") }
+        let key = owner.uuidString + ":" + environment + ":" + token
+        guard !registeredDeviceKeys.contains(key) else { return }
         _ = try await api("/api/devices", method: "POST", body: ["token": token, "environment": environment])
+        registeredDeviceKeys.insert(key)
         pushRegistrationIssue = nil
     }
 
     func recordPushRegistrationError(_ description: String) {
         pushRegistrationIssue = description
-        error = "Notifications could not register: " + description
     }
 
     func unregisterDevice(token: String) async throws {
         let environment = Bundle.main.object(forInfoDictionaryKey: "PalPushEnvironment") as? String ?? "sandbox"
+        let owner = userID
         _ = try await api("/api/devices", method: "DELETE", body: ["token": token, "environment": environment])
+        if let owner { registeredDeviceKeys.remove(owner.uuidString + ":" + environment + ":" + token) }
     }
 
     func calendarStatus() async throws -> CalendarStatus {
@@ -326,9 +365,9 @@ final class PalStore: ObservableObject {
     }
     private func persistOutgoing() { UserDefaults.standard.set(try? JSONEncoder().encode(outgoing), forKey: "PalOutbox") }
 
-    func queue(_ body: String, group: ChatGroup, replyTo: UUID?) async {
+    func queue(_ body: String, group: ChatGroup, replyTo: UUID?, attachment: DraftAttachment? = nil) async {
         guard let userID else { return }
-        let item = OutgoingMessage(groupID: group.id, userID: userID, clientID: UUID(), body: body, replyToID: replyTo, failed: false)
+        let item = OutgoingMessage(groupID: group.id, userID: userID, clientID: UUID(), body: body, replyToID: replyTo, failed: false, attachment: attachment)
         outgoing.append(item)
         persistOutgoing()
         await retry(item, group: group)
@@ -338,18 +377,30 @@ final class PalStore: ObservableObject {
         if let index = outgoing.firstIndex(where: { $0.clientID == item.clientID }) { outgoing[index].failed = false }
         persistOutgoing()
         do {
-            _ = try await send(item.body, to: group, clientID: item.clientID, replyTo: item.replyToID)
+            if let attachment = item.attachment {
+                _ = try await sendAttachment(attachment, body: item.body, to: group, clientID: item.clientID, replyTo: item.replyToID)
+                try? AttachmentFiles.remove(attachment)
+            } else { _ = try await send(item.body, to: group, clientID: item.clientID, replyTo: item.replyToID) }
             outgoing.removeAll { $0.clientID == item.clientID }
         } catch {
-            if let index = outgoing.firstIndex(where: { $0.clientID == item.clientID }) { outgoing[index].failed = true }
-            report(error)
+            if let index = outgoing.firstIndex(where: { $0.clientID == item.clientID }) { outgoing[index].failed = true; report(error) }
         }
+        persistOutgoing()
+    }
+
+    func reconcileOutgoing(with messages: [ChatMessage]) {
+        let received = Set(messages.compactMap(\.clientID))
+        let delivered = outgoing.filter { $0.userID == userID && received.contains($0.clientID) }
+        guard !delivered.isEmpty else { return }
+        for item in delivered { if let attachment = item.attachment { try? AttachmentFiles.remove(attachment) } }
+        outgoing.removeAll { $0.userID == userID && received.contains($0.clientID) }
         persistOutgoing()
     }
 
     func signOut() {
         refreshTask?.cancel()
         refreshTask = nil
+        registeredDeviceKeys.removeAll()
         SessionKeychain.clear()
         storedSession = nil
         groups = []

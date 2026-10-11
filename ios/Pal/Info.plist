@@ -34,6 +34,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo for a chat or scan a group invite.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record a voice message to send to your group.</string>
 	<key>PalAPIURL</key>
 	<string>$(PAL_API_URL)</string>
 	<key>PalKeychainAccessGroup</key>

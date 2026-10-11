@@ -10,6 +10,7 @@ export default defineTool({
     const { db, job } = await jobScope(scopeId(context));
     const state = checked(await db.rpc("pal_group_state", { p_group_id: job.group_id }));
     state.members = state.members.map(({ avatar_path: _path, ...member }: Record<string, unknown>) => member);
+    if (state.settings) { const { avatar_path, ...settings } = state.settings; state.settings = settings; }
     return state;
   },
 });

@@ -133,7 +133,7 @@ struct SourceCardView: View {
                     case .failure: Text("Preview unavailable").font(.caption).foregroundStyle(.secondary)
                     default: ProgressView()
                     }
-                }.frame(maxWidth: .infinity).clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
+                }.frame(maxWidth: .infinity, maxHeight: 140).clipped().clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
             }
             if let url = source.url.flatMap({ URL(string: $0) }), ["http", "https"].contains(url.scheme ?? "") {
                 Link("Open " + (url.host ?? "source"), destination: url).font(.subheadline).frame(minHeight: 44, alignment: .leading)
@@ -143,11 +143,15 @@ struct SourceCardView: View {
             ForEach(saved) { place in NavigationLink { PlaceDetailView(group: group, place: place) } label: { Label(place.name, systemImage: "mappin.circle").font(.subheadline) } }
             ForEach(Array((source.candidates ?? []).enumerated()), id: \.offset) { _, candidate in
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(candidate.name).font(.subheadline.weight(.semibold))
+                    if source.candidates?.count != 1 || candidate.name != source.title { Text(candidate.name).font(.subheadline.weight(.semibold)) }
                     if let city = candidate.city { Text(city).font(.caption).foregroundStyle(.secondary) }
+                    if (candidate.dishes?.isEmpty == false) || (candidate.prices?.isEmpty == false) || (candidate.evidence?.isEmpty == false) {
+                        DisclosureGroup("Video details") {
                     if let dishes = candidate.dishes, !dishes.isEmpty { Text("From the video: " + dishes.joined(separator: ", ")).font(.caption) }
                     if let prices = candidate.prices, !prices.isEmpty { Text("Video prices: " + prices.joined(separator: ", ")).font(.caption) }
                     if let evidence = candidate.evidence, !evidence.isEmpty { Text(evidence.joined(separator: " · ")).font(.caption2).foregroundStyle(.secondary) }
+                        }.font(.caption)
+                    }
                     ForEach(Array((candidate.options ?? []).enumerated()), id: \.offset) { _, option in
                         Button { save(option) } label: { VStack(alignment: .leading) { Text("Save " + option.name); if let address = option.address { Text(address).font(.caption).foregroundStyle(.secondary) } } }.frame(minHeight: 44).disabled(busy || option.providerID == nil || option.latitude == nil || option.longitude == nil)
                     }

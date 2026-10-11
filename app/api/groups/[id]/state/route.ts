@@ -5,6 +5,7 @@ import { actionInput } from "../../../../../lib/validation";
 import { dispatchJobs } from "../../../../../lib/jobs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { signedAvatar } from "../../../../../lib/avatar";
+import { signedGroupAvatar } from "../../../../../lib/group-avatar";
 
 export const maxDuration = 300;
 type Context = { params: Promise<{ id: string }> };
@@ -15,6 +16,7 @@ export function GET(request: Request, context: Context) {
     const { db } = await member(request, id);
     const state = checked(await db.rpc("pal_group_state", { p_group_id: id }));
     state.members = await Promise.all(state.members.map((member: Parameters<typeof signedAvatar>[0]) => signedAvatar(member)));
+    state.settings = await signedGroupAvatar(state.settings);
     return Response.json(state);
   });
 }

@@ -42,7 +42,8 @@ struct ChatGroup: Codable, Identifiable, Hashable {
     let inviteCode: String
     var unreadCount: Int?
     var lastMessage: GroupLastMessage?
-    enum CodingKeys: String, CodingKey { case id, name; case inviteCode = "invite_code", unreadCount = "unread_count", lastMessage = "last_message" }
+    var avatarURL: String?
+    enum CodingKeys: String, CodingKey { case id, name; case inviteCode = "invite_code", unreadCount = "unread_count", lastMessage = "last_message", avatarURL = "avatar_url" }
 }
 struct GroupLastMessage: Codable, Hashable {
     var id: UUID?
@@ -68,8 +69,9 @@ struct ChatMessage: Decodable, Identifiable {
     let replyToID: UUID?
     let clientID: UUID?
     let cards: [MessageCard]
+    let attachments: [ChatAttachment]
     enum CodingKeys: String, CodingKey {
-        case id, role, body, cards
+        case id, role, body, cards, attachments
         case groupID = "group_id", senderID = "sender_id", createdAt = "created_at", replyToID = "reply_to_id", clientID = "client_id"
     }
     init(from decoder: Decoder) throws {
@@ -83,6 +85,7 @@ struct ChatMessage: Decodable, Identifiable {
         replyToID = try c.decodeIfPresent(UUID.self, forKey: .replyToID)
         clientID = try c.decodeIfPresent(UUID.self, forKey: .clientID)
         cards = try c.decodeIfPresent([MessageCard].self, forKey: .cards) ?? []
+        attachments = try c.decodeIfPresent([ChatAttachment].self, forKey: .attachments) ?? []
     }
     /// Keep sender labels and delivery times on the edges of a short message run.
     func follows(_ previous: ChatMessage, calendar: Calendar = .current) -> Bool {
@@ -93,12 +96,15 @@ struct ChatMessage: Decodable, Identifiable {
     }
     func displayedBody(in state: GroupState) -> String? {
         let value = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !attachments.isEmpty && ["Photo", "Voice message"].contains(value) { return nil }
         if ["https", "http"].contains(URL(string: value)?.scheme ?? "") { return body }
         for card in cards {
             var title: String?
             switch card.type {
             case "plan": title = state.plans.first { $0.id == card.entityID }?.title
-            case "reminder": title = state.reminders.first { $0.id == card.entityID }?.body
+            case "reminder":
+                title = state.reminders.first { $0.id == card.entityID }?.body
+                if let title, value == "Reminder: " + title { return nil }
             case "choice", "availability": title = state.polls.first { $0.id == card.entityID }?.question
             case "place":
                 title = state.places.first { $0.id == card.entityID }?.name
@@ -330,6 +336,7 @@ struct OutgoingMessage: Codable, Identifiable {
     var body: String
     var replyToID: UUID?
     var failed: Bool
+    var attachment: DraftAttachment?
     var id: UUID { clientID }
 }
 

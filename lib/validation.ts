@@ -85,7 +85,17 @@ export const profileInput = z.object({
   notification_preferences: z.object({ enabled: z.boolean() }).strict().optional(),
 }).strict().refine(value => value.notifications_enabled === undefined || value.notification_preferences === undefined, "Choose one notification setting field.");
 export const deviceInput = z.object({ token: z.string().regex(/^[a-fA-F0-9]{64,200}$/).refine(value => value.length % 2 === 0, "Token must encode complete bytes."), environment: z.enum(["sandbox", "production"]) }).strict();
-export const agentReply = z.object({ reply: z.string().max(4000).describe("The short chat reply. Return an empty string to stay silent after observations or tool/card actions.") }).strict();
+export const palEmotions = ["fier", "heureux", "hilare", "curieux", "confus", "surpris", "timide", "triste", "colere", "somnolent", "attentif", "neutre"] as const;
+export const palEmotion = z.enum(palEmotions);
+export const agentReply = z.object({
+  reply: z.string().max(4000).describe("The short chat reply. Return an empty string to stay silent after observations or tool/card actions."),
+  emotion: palEmotion.catch("fier").optional().describe("The mascot expression matching this reply's actual tone; use fier when no more specific emotion fits."),
+}).strict();
+
+export function parsedPalReply(value: unknown) {
+  const reply = agentReply.parse(value);
+  return { body: reply.reply.trim(), emotion: reply.emotion ?? "fier" };
+}
 
 export function sharedUrls(body: string) {
   const found = body.match(/https?:\/\/[^\s<>]+/gi) ?? [];

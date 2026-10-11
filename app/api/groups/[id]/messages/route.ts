@@ -4,6 +4,7 @@ import { checked } from "../../../../../lib/db";
 import { messageInput } from "../../../../../lib/validation";
 import { dispatchJobs } from "../../../../../lib/jobs";
 import { setTimeout as sleep } from "node:timers/promises";
+import { signedAttachment } from "../../../../../lib/attachments";
 
 export const maxDuration = 300;
 type Context = { params: Promise<{ id: string }> };
@@ -12,10 +13,13 @@ export function GET(request: Request, context: Context) {
   return route(async () => {
     const { id } = await context.params;
     const { db } = await member(request, id);
-    const latest = checked(await db.from("messages").select("id,group_id,sender_id,role,body,client_id,created_at,reply_to_id,card")
+    const latest = checked(await db.from("messages").select("id,group_id,sender_id,role,body,client_id,created_at,reply_to_id,card,emotion")
       .eq("group_id", id).or("source_key.is.null,source_key.not.like.weekly:%")
       .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(200));
-    return Response.json({ messages: (latest ?? []).reverse().map(({ card, ...message }) => ({ ...message, cards: card ? [card] : [] })) });
+    const attachmentRows = latest?.length ? checked(await db.from("message_attachments").select("*")
+      .eq("group_id", id).in("message_id", latest.map(message => message.id))) ?? [] : [];
+    const attachments = new Map(await Promise.all(attachmentRows.map(async attachment => [attachment.message_id, await signedAttachment(attachment)] as const)));
+    return Response.json({ messages: (latest ?? []).reverse().map(({ card, ...message }) => ({ ...message, cards: card ? [card] : [], attachments: attachments.has(message.id) ? [attachments.get(message.id)] : [] })) });
   });
 }
 
