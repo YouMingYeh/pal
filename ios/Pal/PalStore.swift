@@ -146,6 +146,19 @@ final class PalStore: ObservableObject {
         notice = nil
     }
 
+    func authenticateApple(identityToken: Data?, nonce: String) async throws {
+        guard !nonce.isEmpty, let identityToken,
+              let token = String(data: identityToken, encoding: .utf8), !token.isEmpty else {
+            throw PalFailure(message: "Apple did not return a valid sign-in. Please try again.")
+        }
+        let data = try await request(base: configuredURL("SupabaseURL"), path: "/auth/v1/token?grant_type=id_token",
+                                     method: "POST", body: ["provider": "apple", "id_token": token, "nonce": nonce], auth: true)
+        let value = StoredSession(try JSONDecoder().decode(AuthSession.self, from: data))
+        try SessionKeychain.save(value)
+        storedSession = value
+        notice = nil
+    }
+
     private func token() async throws -> String {
         guard let storedSession else { throw PalFailure(message: "Sign in to continue.") }
         if !storedSession.needsRefresh() { return storedSession.session.accessToken }

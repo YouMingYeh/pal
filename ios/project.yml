@@ -5,7 +5,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: '5.0'
-    DEVELOPMENT_TEAM: ''
+    DEVELOPMENT_TEAM: '6GAAMYMS72'
     CODE_SIGN_STYLE: Automatic
 configFiles:
   Debug: Config.xcconfig
@@ -15,6 +15,10 @@ targets:
     type: application
     platform: iOS
     sources: [Pal]
+    entitlements:
+      path: Pal/Pal.entitlements
+      properties:
+        com.apple.developer.applesignin: [Default]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pal.spike
@@ -35,6 +39,10 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources: [PalTests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.pal.spike.tests
     dependencies:
       - target: Pal
 schemes:

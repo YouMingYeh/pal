@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		2B15065AAFA4FEE9C28E7EF9 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */; };
 		2E134CFE129D6CFA85515D86 /* PalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D7C60E655D843D1BED0D0B2 /* PalTests.swift */; };
 		661649F05F2D1060FA1473D7 /* PalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6BC3535EFC4889BBE81CF1F /* PalStore.swift */; };
 		7460D1FA42AD213B00A903CD /* PalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C88929C3861C7A8FEB94B9D /* PalApp.swift */; };
@@ -30,7 +31,9 @@
 		9C88929C3861C7A8FEB94B9D /* PalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalApp.swift; sourceTree = "<group>"; };
 		A4A10EFFE5BF0968495B2284 /* PalTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A6BC3535EFC4889BBE81CF1F /* PalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PalStore.swift; sourceTree = "<group>"; };
+		A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
 		C6935B627C04EB82CE57CE0D /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		CF1F6907C77B7FC03D7D47D9 /* Pal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pal.entitlements; sourceTree = "<group>"; };
 		E5F2FA3E3E82587B666C8E4A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -74,7 +77,9 @@
 		F49B33858164AC26E7795C34 /* Pal */ = {
 			isa = PBXGroup;
 			children = (
+				A7A3D4E7C33122B1F23D5DBE /* AppleSignIn.swift */,
 				E5F2FA3E3E82587B666C8E4A /* Info.plist */,
+				CF1F6907C77B7FC03D7D47D9 /* Pal.entitlements */,
 				9C88929C3861C7A8FEB94B9D /* PalApp.swift */,
 				A6BC3535EFC4889BBE81CF1F /* PalStore.swift */,
 				91916F06B448D4DD9F4899AC /* Views.swift */,
@@ -130,11 +135,11 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					BF5AE344DBF4A1A459E5266E = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = 6GAAMYMS72;
 						ProvisioningStyle = Automatic;
 					};
 					D4A69856C0B6BE8D217A5487 = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = 6GAAMYMS72;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -164,6 +169,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2B15065AAFA4FEE9C28E7EF9 /* AppleSignIn.swift in Sources */,
 				7460D1FA42AD213B00A903CD /* PalApp.swift in Sources */,
 				661649F05F2D1060FA1473D7 /* PalStore.swift in Sources */,
 				DD1EAB252B10433ED52B6AD6 /* Views.swift in Sources */,
@@ -193,11 +199,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pal.spike.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pal.app/Pal";
@@ -208,6 +216,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Pal/Pal.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Pal/Info.plist;
@@ -228,6 +237,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Pal/Pal.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Pal/Info.plist;
@@ -281,7 +291,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 6GAAMYMS72;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -307,11 +317,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pal.spike.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pal.app/Pal";
@@ -355,7 +367,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 6GAAMYMS72;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
