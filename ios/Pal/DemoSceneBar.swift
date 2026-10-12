@@ -28,6 +28,8 @@ struct DemoComposerState {
 
     mutating func submission(for body: String, demo: DemoState?, hasAttachment: Bool, hasReply: Bool) -> Submission? {
         defer { prefill = nil }
+        // A manual send consumes this suggestion too; a refresh must not refill the text just cleared.
+        if let demo { seen.insert(demo.sceneID) }
         guard let prefill, let demo, demo.canAdvance, prefill.sceneID == demo.sceneID,
               body == prefill.submission.body, !hasAttachment, !hasReply else { return nil }
         return prefill.submission

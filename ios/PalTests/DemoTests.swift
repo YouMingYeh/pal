@@ -70,6 +70,26 @@ final class DemoTests: XCTestCase {
             XCTAssertNil(composer.submission(for: mode == "edited" ? "My custom follow-up" : state.nextPrompt!, demo: current, hasAttachment: mode == "media", hasReply: mode == "reply"))
         }
     }
+    func testManualSendCannotRefillTheCurrentSuggestionAfterTheInputClears() throws {
+        let state = try demo(prompt: "Suggested message"), next = try demo(step: 1, prompt: "Next message", generation: state.generation)
+        for body in ["My own message", "我改成自己的訊息", "First line\nSecond line"] {
+            var composer = DemoComposerState()
+            XCTAssertNil(suggest(&composer, state, draft: body), "Loading the room preserves typed text.")
+            XCTAssertNil(composer.submission(for: body, demo: state, hasAttachment: false, hasReply: false))
+            XCTAssertNil(suggest(&composer, state, pending: true))
+            XCTAssertNil(suggest(&composer, state), "Acknowledgement or keyboard dismissal cannot restore the same suggestion.")
+            XCTAssertNil(suggest(&composer, next, draft: "My new draft"), "A later step cannot replace text typed after sending.")
+            XCTAssertEqual(suggest(&composer, next), "Next message", "The next step remains available when the composer is idle.")
+        }
+    }
+    func testPhotoAndReplySendsDoNotRefillAnUnseenSuggestion() throws {
+        let state = try demo()
+        for hasAttachment in [false, true] {
+            var composer = DemoComposerState()
+            XCTAssertNil(composer.submission(for: "Photo or reply", demo: state, hasAttachment: hasAttachment, hasReply: !hasAttachment))
+            XCTAssertNil(suggest(&composer, state))
+        }
+    }
     func testPrefillWaitsForOutboxAndDoesNotAffectNormalRooms() throws {
         let state = try demo()
         var composer = DemoComposerState()

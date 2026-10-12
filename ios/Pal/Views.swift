@@ -670,7 +670,7 @@ struct ChatView: View {
         let body = submission?.body ?? text
         let mentions = PalMentions.retained(selectedMentions, in: body)
         draft = ""; reply = nil; attachment = nil; selectedPhoto = nil; selectedMentions = [:]
-        allowFocusedPrefill = true
+        allowFocusedPrefill = submission != nil
         Task { await store.queue(body, group: group, replyTo: replyID, attachment: media, mentions: mentions, demoStep: submission?.step, demoGeneration: submission?.generation); await refresh() }
     }
     private func react(_ emoji: String, to message: ChatMessage) { Task { do { try await store.mutate(group, action: "reaction.toggle", data: ["message_id": .string(message.id.uuidString), "emoji": .string(emoji)]) } catch { store.report(error) } } }
