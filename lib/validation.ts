@@ -118,8 +118,14 @@ export function parsedPalReply(value: unknown) {
 export function parsedPalOutputs(value: unknown) {
   const reply = agentReply.parse(value);
   const messages = reply.messages?.length ? reply.messages : reply.reply.trim() ? [{ body: reply.reply.trim() }] : [];
+  const seen = new Set<string>();
   return messages.map(message => ({ body: message.body, emotion: message.emotion ?? reply.emotion ?? "fier",
-    reply_to_id: message.reply_to_id ?? null, mentions: message.mentions ?? [], card: message.card ?? null }));
+    reply_to_id: message.reply_to_id ?? null, mentions: message.mentions ?? [], card: message.card ?? null }))
+    .filter(({ emotion: _emotion, ...message }) => {
+      const key = JSON.stringify(message);
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
 }
 
 export function sharedUrls(body: string) {

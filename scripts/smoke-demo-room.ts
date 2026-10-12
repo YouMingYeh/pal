@@ -15,6 +15,10 @@ async function api(path:string,method="GET",data?:unknown){
  const result=await fetch(origin+path,{method,headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:data===undefined?undefined:JSON.stringify(data),signal:AbortSignal.timeout(30000)});
  const body=await result.json();assert.ok(result.ok,`${path} failed ${result.status}: ${body.error??""}`); return body;
 }
+async function rejectedNext(payload:unknown){
+ const response=await fetch(`${origin}/api/groups/${groupID}/demo`,{method:'POST',headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify(payload),signal:AbortSignal.timeout(30000)});
+ assert.equal(response.status,400,'Invalid or stale suggested messages fail before creating cast messages.');
+}
 try{
  const email=`controlled-demo-${randomUUID()}@pal-demo.example`, password=randomUUID()+randomUUID();
  const created=await db.auth.admin.createUser({email,password,email_confirm:true});assert.ifError(created.error);assert.ok(created.data.user);userID=created.data.user.id;
@@ -32,6 +36,11 @@ try{
  for(let step=0;step<6;step++){
   const before=await api(`/api/groups/${groupID}/state`);assert.equal(before.demo.step,step);assert.equal(before.demo.status,'ready');assert.equal(before.demo.next_prompt,prompts[step]);
   const payload={action:'next',step,generation:before.demo.generation,client_id:randomUUID(),body:before.demo.next_prompt};
+  if(step===0){
+   await rejectedNext({...payload,body:'Edited human text must use the ordinary message API.'});
+   await rejectedNext({...payload,lines:[{user_id:userID,body:'Injected cast message'}]});
+   const unchanged=await api(`/api/groups/${groupID}/state`);assert.equal(unchanged.demo.step,0);assert.equal(unchanged.demo.status,'ready');
+  }
   const started=Date.now();const accepted=await api(`/api/groups/${groupID}/demo`,'POST',payload);assert.equal(accepted.message.body,payload.body);
   // A transport retry must not create another human message or scripted actor sequence.
   const replay=await api(`/api/groups/${groupID}/demo`,'POST',payload);assert.equal(replay.message.id,accepted.message.id);
@@ -59,6 +68,9 @@ try{
  const complete=await api(`/api/groups/${groupID}/state`);assert.equal(complete.demo.step,6);assert.equal(complete.demo.next_prompt,null);
  const prior=complete.demo.generation;
  await api(`/api/groups/${groupID}/demo`,'POST',{action:'reset'});const clean=await api(`/api/groups/${groupID}/state`);assert.equal(clean.demo.step,0);assert.notEqual(clean.demo.generation,prior);assert.equal(clean.plans.length,0);
+ await rejectedNext({action:'next',step:0,generation:prior,client_id:randomUUID(),body:prompts[0]});
+ assert.equal((await api(`/api/groups/${groupID}/messages`)).messages.length,0,'Reset removes dialogue and a stale queued send cannot resurrect it.');
+ assert.deepEqual(new Set(clean.members.map((member:{user_id:string})=>member.user_id)),new Set([userID,...real.actors]),'Reset retains the exact registered members.');
  console.log(`ALL GREEN: ${kind} six controlled exchanges used short mock dialogue with guarded persisted state, replay was idempotent, restart isolated.`);
 }catch(error){
  // Keep isolated acceptance evidence private before its disposable room is removed.

@@ -20,6 +20,26 @@ test("Pal keeps intentional text boundaries, per-message tone and genuine silenc
   ]);
 });
 
+test("Pal drops identical bubbles in one turn without suppressing distinct replies or later turns", () => {
+  const input = { reply: "", messages: [
+    { body: "  Friday works.  ", reply_to_id: source, emotion: "heureux" },
+    { body: "Friday works.", reply_to_id: source, emotion: "fier" },
+    { body: "Which restaurant?", reply_to_id: plan, emotion: "curieux" },
+  ] };
+  const outputs = parsedPalOutputs(input);
+  assert.equal(outputs.length, 2);
+  assert.equal(outputs[0].emotion, "heureux");
+  assert.equal(outputs[0].reply_to_id, source);
+  assert.equal(outputs[1].reply_to_id, plan);
+  assert.deepEqual(parsedPalOutputs(input), outputs, "Deduplication never crosses turns.");
+  assert.equal(parsedPalOutputs({ reply: "", messages: [
+    { body: "Yes.", reply_to_id: source }, { body: "Yes.", reply_to_id: plan },
+  ] }).length, 2, "Identical words addressing distinct messages remain distinct.");
+  assert.equal(parsedPalOutputs({ reply: "", messages: [
+    { body: "Dinner?" }, { body: "Dinner?", card: { type: "plan", entity_id: plan } },
+  ] }).length, 2, "Do not discard a real card because its caption repeats.");
+});
+
 test("Pal cannot inject generic UI, impersonate a sender, self-mention or duplicate responses", () => {
   const output = (message: unknown) => ({ reply: "", messages: [message] });
   assert.throws(() => parsedPalOutputs({ reply: "Duplicate", messages: [{ body: "Duplicate" }] }));
